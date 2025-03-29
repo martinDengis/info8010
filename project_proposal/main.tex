@@ -1,0 +1,103 @@
+\documentclass[twocolumn,superscriptaddress,aps]{revtex4-1}
+
+\usepackage[utf8]{inputenc}
+
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{amsthm}
+
+\usepackage{bbold}
+\usepackage{bm}
+\usepackage{graphicx}
+\usepackage{color}
+\usepackage{hyperref}
+
+\begin{document}
+
+
+% ==============================================================================
+
+\title{\Large{INFO8010: Project Proposal}}
+\vspace{1cm}
+\author{\small{\bf Martin Dengis}}
+\affiliation{\texttt{hidden@email.com} (\texttt{sxxxxxx})}
+\author{\small{\bf Gilles Ooms}}
+\affiliation{\texttt{hidden@email.com} (\texttt{sxxxxxx})}
+
+\begin{abstract}
+    This document presents the project we would like to conduct for the course of \textbf{Deep Learning} (INFO8010). It starts by introducing the project and the pursued goal. The MVP is then presented along with our initial assumptions on the architecture to be used. After detailing the data sources used, a section on the estimated computing resources required for the task is put forward. We finish by listing some nice-to-haves if time permits and make a short literature review of related work.  
+\end{abstract}
+
+\maketitle
+
+% ==============================================================================
+
+\section{Project Presentation}
+
+Our aim is to develop a \textbf{computer vision} system to recognize and classify bib numbers of runners in race events. The goal is very practical in that such a system would allow photographers at the event to quickly tag their photos with the participants' race numbers, enabling the runners (or their relatives) to easily find photos of themselves during the race. This reduces the need for manual tagging by the photographers, which is a very time-consuming process. 
+
+The task at hand is primarily a \textbf{sequence recognition task}. Indeed, recognizing bib numbers requires \textbf{object detection} (identifying the bib) and \textbf{sequence transcription} (extracting the number). 
+
+One of the challenges of our application is the need to ensure high accuracy under varying conditions (lighting, weather, occlusions, single vs. group of runners ...). We will also need to account for the fact that the photos might have different angles, resolutions, orientations, all of which can require a dedicated and sound \textit{preprocessing} and \textit{data augmentation} workflow. Motion blur is also to be expected. Finally, different race events typically use different bibs, posing bib detection challenges. Color of the bib might differ, font and font size also. 
+
+
+\section{Minimum Viable Product}
+
+Our problem can be decomposed into the two following tasks, which can be addressed using a two-level model scheme or an end-to-end model. An optional third task is also presented (see Section \ref{sec:nth} for more details).
+\begin{enumerate}
+    \item \textbf{Bib Detection} - An object detection model (e.g., YOLO\cite{redmon_you_2016}, Faster R-CNN\cite{ren_faster_2015}, DETR\cite{carion_end--end_2020}) to locate bibs in images
+
+    \item \textbf{Number Recognition} - Applying OCR (e.g., CRNN, TrOCR\cite{li_trocr_2022}) to extract the bib number
+
+    \item \textbf{Basic Tagging System} - Possibly an interface for race photo upload and automatic tagging (Sec. \ref{sec:nth})
+\end{enumerate}
+It is yet to be determined which approach between a two-level model scheme (e.g., YOLO + TrOCR) or an integrated transformer-based model tackling both tasks at once (e.g., Pix2Seq\cite{chen_pix2seq_2022}) is the best suited for our setting. 
+
+Regardless of our final choice, we believe this MVP formulation would validate the feasibility of automated bib recognition before optimizing for robustness (e.g., handling blurry images, occlusions, and different fonts).
+
+
+\section{Dataset}
+
+We have successfully compiled an initial dataset of approximately 2,500 unique images from local racing events. These images were collected through scraping of online repositories maintained by local photographers who freely share race event photos.
+
+All images are from outdoor events and exhibit variations in critical aspects that will challenge and strengthen our model. The images are of different photographic qualities, from high-resolution, crisp shots to more challenging, blurry images taken from a distance. Runners are captured in various states of motion, with backgrounds ranging from urban landscapes to natural terrains. The demographic representation is equally diverse, including runners of different ages, body types, and attire, which will help our model develop robustness. Distances between the photographer and subjects vary, from close-up shots of individual runners to wide-angle images of running groups, presenting a complex scenario for object detection and number recognition. The bib worn by runners also changes from one race to another.
+
+\section{Required Computing Resources}
+
+ The most intensive task will be the \textbf{model training} phase, where a dedicated GPU  is needed. Both our personal laptops have an integrated GPU: Martin has access to a \textit{NVIDIA GeForce RTX 3050} and Gilles has an \textit{AMD RadeonTM RX7700S} at his disposal. While these could allow for beta implementation testing and debugging, we believe we would need access to more compute for training our models.
+
+As both of us already have access to ***, we propose to use it for our final training phase, upon acceptance from the educational team. Otherwise, we will revert to use a cloud-based solution such as Google Colab (free-tier).
+
+
+\section{Nice-to-haves}\label{sec:nth}
+
+Some project enhancement strategies include:
+\begin{enumerate}
+    \item \textbf{Basic Tagging System} - An interface where photographers can upload a race photo (or batch upload), get the detected numbers, and see the extracted results.
+    \item \textbf{Confidence Scoring for Manual Review} - To each bib number detection, we could associate a confidence score to allow users to review manually uncertain results.
+    \item \textbf{Fallback Strategies} -  In case a bib detection fails, a fallback system to do face recognition could be added to match photos to previously successfully tagged ones.
+\end{enumerate}
+
+
+\section{Related Work}
+
+Automated recognition of racing bib numbers (RBN) is a task that has received significant attention from the DL community due to the very practical problem it solves: manual tagging of race photos can be an immensely time-consuming process. For this reason, various deep learning approaches have addressed this problem.
+
+Early methods used a traditional convolutional neural network (CNN) for RBN detection as indeed, this architecture remains state-of-the-art for processing images (along transformer-based methods). For instance, Ivarsson and Müller (2019) investigated the use of deep CNNs, with a focus on leveraging transfer learning by training models on the Street View House Numbers (SVHN) dataset to compensate for the scarcity of labeled RBN images. Their research demonstrated that the use of transfer learning vastly improved the effectiveness of their system.\cite{ivarsson_racing_2019}
+
+Prior to that, Boonsim (2018) introduced a method based on edge-detection (i.e., similar to what can be done using a convolutional kernel) in what was referred to as "complex backgrounds". Complex backgrounds relate to those natural photos where a lot of text appears in the scene, which according to him triggers a lot of false positives. His work highlighted the potential for an edge-based detection scheme for detecting RBNs, though the use of a restricted dataset ('only' 400 images were used) puts the results in perspective. Nevertheless, this shows that the underpinning mechanisms of CNNs could work well for RBN detection.\cite{boonsim_racing_2018}
+
+Moreover, Convolutional \textbf{Recurrent} Neural Network have also shown great potential for our setting. CRNNs combine CNNs for feature extraction and Recurrent Neural Networks (RNNs) for sequence modeling, effectively recognizing text in images (Shi et al., 2015). This architecture has been widely adopted due to its accuracy and efficiency in text recognition tasks, highlighting the relevance of such an approach for our project.\cite{shi_end--end_2015}
+
+An alternative to CRNNs lies in the use of transformer-based models, like TrOCR. The main advantage this model offers over the previous approach is the fact that this is an "an end-to-end text recognition approach with pre-trained image Transformer and text Transformer models, namely TrOCR, which leverages the Transformer architecture for both image understanding and wordpiece-level text generation." (Li et al., 2022) Hence, this option efficiently integrates both the bib detection task and the number recognition task in a single model, which could prove useful in our case.\cite{li_trocr_2022} 
+
+These studies underline the progression in RBN detection and recognition methodologies, and the interest around it. While architectures like YOLO\cite{redmon_you_2016} and CRNNs have long been established, more recent ones like TrOCR\cite{li_trocr_2022} and Pix2Seq\cite{chen_pix2seq_2022} offer a new paradigm by addressing both tasks at the same time, enhancing accuracy and efficiency.
+ 
+
+% ==============================================================================
+
+\bibliographystyle{unsrt}
+\bibliography{RBN.bib}
+
+\end{document}
