@@ -33,4 +33,4 @@ We are considering:
 ---
 
 🚀 **Authors**: Martin Dengis & Gilles Ooms  
-📧 **Contact**: @martinDengis | @giooms
+📧 **Contact**: [@martinDengis](https://github.com/martinDengis) | [@giooms](https://github.com/giooms)
