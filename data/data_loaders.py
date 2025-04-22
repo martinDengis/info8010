@@ -51,13 +51,13 @@ def collate_fn(batch):
     return images, targets
 
 
-def get_data_loader(data_dir, batch_size):
+def get_data_loaders(data_dir, batch_size):
     """Create data loaders for training, validation, and testing datasets."""
     data_dir = Path(data_dir)
 
     # Create or get datasets
     train_dataset = build_dataset(data_dir, mode="train")
-    val_dataset = build_dataset(data_dir, mode="val")
+    val_dataset = build_dataset(data_dir, mode="valid")
     test_dataset = build_dataset(data_dir, mode="test")
 
     # Create data loaders with custom collate function
