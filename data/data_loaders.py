@@ -1,7 +1,7 @@
 from torch.utils.data import DataLoader
 from pathlib import Path
 from data.bibnet_dataset import BibNetDataset
-import torch
+from data.collate_batch import collate_fn
 
 
 def build_dataset(data_dir, mode, force_reload=False, transform=None):
@@ -27,28 +27,6 @@ def build_dataset(data_dir, mode, force_reload=False, transform=None):
     print(f"Built {mode} dataset with {len(dataset)} samples.")
 
     return dataset
-
-
-def collate_fn(batch):
-    """
-    Custom collate function to handle variable-sized targets.
-
-    Args:
-        batch: List of (image, target) tuples
-
-    Returns:
-        Tuple of (images, targets) where images is a tensor and targets is a list
-    """
-    images = []
-    targets = []
-
-    for img, target in batch:
-        images.append(img)
-        targets.append(target)
-
-    images = torch.stack(images, dim=0)
-
-    return images, targets
 
 
 def get_data_loaders(data_dir, batch_size):

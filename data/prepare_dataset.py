@@ -17,7 +17,7 @@ def main():
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
-    stats_file = data_dir / "dataset_stats.json"
+    stats_file = data_dir / "dataset" / "dataset_stats.json"
 
     # Phase 1: Calculate dataset statistics if needed
     if args.calculate_stats or not os.path.exists(stats_file):

@@ -1,4 +1,6 @@
 from data.transform.build import build_train_transforms, build_test_transforms
+from data.transform.transforms import ResizeWithPadding
+from data.collate_batch import collate_fn_loaders
 from pathlib import Path
 from PIL import Image
 from torch.utils.data import Dataset
@@ -11,7 +13,6 @@ import os
 import torch
 import torchvision.transforms as transforms
 
-from data.transform.transforms import ResizeWithPadding
 
 
 class BibNetDataset(Dataset):
@@ -40,7 +41,7 @@ class BibNetDataset(Dataset):
                 self.transform = build_test_transforms(data_dir=self.data_dir)
 
         self.dataset_dir = self.data_dir / "dataset" / mode
-        self.h5_file_path = self.data_dir / f"bib_{mode}.h5"
+        self.h5_file_path = self.data_dir / "dataset" / f"bib_{mode}.h5"
 
         # Load or create H5 file
         if not os.path.exists(self.h5_file_path) or force_reload:
@@ -175,13 +176,8 @@ class BibNetDataset(Dataset):
 
         from torch.utils.data import DataLoader
 
-        # custom collate func that only collects the images and ignores targets
-        def collate_fn(batch):
-            images = torch.stack([item[0] for item in batch])
-            return images, None
-
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=False,
-                            num_workers=4, collate_fn=collate_fn)
+                            num_workers=4, collate_fn=collate_fn_loaders)
 
         # Initialize channels sum and squared sum
         channels_sum = torch.zeros(3)
