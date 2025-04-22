@@ -66,7 +66,7 @@ def build_transforms(cfg=None, is_train=True, data_dir=None):
     )
     if data_dir is not None:
         # Try to load dataset-specific normalization
-        stats_file = Path(data_dir) / "dataset_stats.json"
+        stats_file = Path(data_dir) / "dataset" / "dataset_stats.json"
 
         if os.path.exists(stats_file):
             with open(stats_file, 'r') as f:
