@@ -1,7 +1,6 @@
 from torch.utils.data import DataLoader
 from pathlib import Path
-from bibnet import BibNetDataset
-import torchvision.transforms as transforms
+from data.bibnet_dataset import BibNetDataset
 import torch
 
 

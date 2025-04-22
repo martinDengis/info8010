@@ -1,3 +1,4 @@
+from data.transform.build import build_train_transforms, build_test_transforms
 from pathlib import Path
 from PIL import Image
 from torch.utils.data import Dataset
@@ -10,6 +11,8 @@ import os
 import torch
 import torchvision.transforms as transforms
 
+from data.transform.transforms import ResizeWithPadding
+
 
 class BibNetDataset(Dataset):
     """Dataset for bib number detection using COCO format annotations."""
@@ -20,38 +23,23 @@ class BibNetDataset(Dataset):
 
         Args:
             data_dir (str): Path to the root data directory
-            mode (str): One of 'train', 'val', or 'test'
+            mode (str): One of 'train', 'valid', or 'test'
             transform (callable, optional): Optional transform to be applied on images
             force_reload (bool): If True, regenerate the H5 file even if it exists
         """
         self.data_dir = Path(data_dir)
         self.mode = mode
 
-        # Use custom transform if provided, otherwise create a default transform
+        # Use custom transform if provided
         if transform is not None:
             self.transform = transform
-        else:
-            # Check if dataset_stats.json exists
-            stats_file = self.data_dir / "dataset_stats.json"
-
-            if os.path.exists(stats_file):
-                # Load statistics and apply normalization
-                with open(stats_file, 'r') as f:
-                    stats = json.load(f)
-
-                self.transform = transforms.Compose([
-                    transforms.ToTensor(),
-                    transforms.Normalize(mean=stats["mean"], std=stats["std"])
-                ])
-                print(f"Using dataset-specific normalization from {stats_file}")
+        else:  # otherwise create default transform based on mode
+            if mode == "train":
+                self.transform = build_train_transforms(data_dir=self.data_dir)
             else:
-                # No normalization if stats file doesn't exist
-                self.transform = transforms.Compose([
-                    transforms.ToTensor()
-                ])
-                print("No dataset_stats.json found. Using ToTensor without normalization.")
+                self.transform = build_test_transforms(data_dir=self.data_dir)
 
-        self.dataset_dir = self.data_dir / "dataset" / "v1" / mode
+        self.dataset_dir = self.data_dir / "dataset" / mode
         self.h5_file_path = self.data_dir / f"bib_{mode}.h5"
 
         # Load or create H5 file
@@ -169,7 +157,7 @@ class BibNetDataset(Dataset):
 
         Args:
             data_dir (str): Path to the root data directory
-            mode (str): One of 'train', 'val', or 'test'
+            mode (str): One of 'train', 'valid', or 'test'
             batch_size (int): Batch size for calculation
 
         Returns:
@@ -178,13 +166,16 @@ class BibNetDataset(Dataset):
         dataset = BibNetDataset(
             data_dir=data_dir,
             mode=mode,
-            transform=transforms.Compose([transforms.ToTensor()]),
+            transform=transforms.Compose([
+                ResizeWithPadding((640, 640)),
+                transforms.ToTensor()
+            ]),
             force_reload=False
         )
 
         from torch.utils.data import DataLoader
 
-        # Custom collate function that only collects the images and ignores targets
+        # custom collate func that only collects the images and ignores targets
         def collate_fn(batch):
             images = torch.stack([item[0] for item in batch])
             return images, None
@@ -198,11 +189,11 @@ class BibNetDataset(Dataset):
         num_batches = 0
 
         # Calculate running statistics
-        print("Calculating dataset statistics...")
-        for images, _ in tqdm(loader):
+        for images, _ in tqdm(loader, desc=f"Processing {mode} batches"):
             # Images shape: [batch_size, 3, height, width]
             channels_sum += torch.mean(images, dim=[0, 2, 3]) * images.size(0)
-            channels_squared_sum += torch.mean(images**2, dim=[0, 2, 3]) * images.size(0)
+            channels_squared_sum += torch.mean(images **
+                                               2, dim=[0, 2, 3]) * images.size(0)
             num_batches += images.size(0)
 
         mean = channels_sum / num_batches
