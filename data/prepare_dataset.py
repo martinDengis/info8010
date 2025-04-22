@@ -2,9 +2,9 @@ import argparse
 import json
 import os
 from pathlib import Path
-from build import build_dataset
-from bibnet import BibNetDataset
-import torchvision.transforms as transforms
+from data.bibnet_dataset import BibNetDataset
+from data.transform.build import build_train_transforms, build_test_transforms
+
 
 def main():
     parser = argparse.ArgumentParser(description='Prepare BibNet dataset')
@@ -13,32 +13,21 @@ def main():
     parser.add_argument('--force_reload', action='store_true',
                         help='Force regeneration of H5 files')
     parser.add_argument('--calculate_stats', action='store_true',
-                        help='Calculate dataset statistics')
-    parser.add_argument('--apply_normalization', action='store_true',
-                        help='Apply normalization using calculated statistics')
+                        help='Calculate dataset statistics (mean, std) and save to JSON file')
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
     stats_file = data_dir / "dataset_stats.json"
 
-    # 1: Create initial datasets without normalization
-    if args.force_reload or not all(os.path.exists(data_dir / f"bib_{mode}.h5")
-                                    for mode in ['train', 'valid', 'test']):
+    # Phase 1: Calculate dataset statistics if needed
+    if args.calculate_stats or not os.path.exists(stats_file):
         print("\n========================================")
-        print("1: Creating initial datasets without normalization...")
+        print("Calculating dataset statistics...")
         print("========================================")
-        for mode in ['train', 'valid', 'test']:
-            build_dataset(data_dir, mode=mode, force_reload=True, transform=None)
+        # stats will be calculated on training set w/ only ToTensor transform
+        mean, std = BibNetDataset.calculate_dataset_stats(
+            data_dir, mode='train')
 
-    # 2: Calculate dataset statistics if requested
-    if args.calculate_stats or (args.apply_normalization and not os.path.exists(stats_file)):
-        print("\n========================================")
-        print("2: Calculating dataset statistics...")
-        print("========================================")
-        # Calculate statistics on the training set
-        mean, std = BibNetDataset.calculate_dataset_stats(data_dir, mode='train')
-
-        # Save statistics to file
         stats = {
             "mean": mean.tolist(),
             "std": std.tolist()
@@ -47,28 +36,29 @@ def main():
             json.dump(stats, f)
         print(f"Statistics saved to {stats_file}")
 
-    # 3: Recreate datasets with normalization if requested
-    if args.apply_normalization:
-        print("\n========================================")
-        print("3: Recreating datasets with normalization...")
-        print("========================================")
+    # Phase 2: Create datasets with transforms
+    print("\n========================================")
+    print("Creating datasets with transforms...")
+    print("========================================")
 
-        # Load statistics
-        with open(stats_file, 'r') as f:
-            stats = json.load(f)
+    # The transforms will automatically use the dataset stats if available
+    for mode in ['train', 'valid', 'test']:
+        print(f"Building {mode} dataset...")
+        if mode == 'train':
+            transform = build_train_transforms(data_dir=data_dir)
+        else:
+            transform = build_test_transforms(data_dir=data_dir)
 
-        # Create normalize transform
-        normalize_transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=stats["mean"], std=stats["std"])
-        ])
+        BibNetDataset(
+            data_dir=data_dir,
+            mode=mode,
+            transform=transform,
+            force_reload=args.force_reload
+        )
+        print(f"Completed {mode} dataset creation.")
 
-        # Rebuild datasets with normalization
-        for mode in ['train', 'valid', 'test']:
-            build_dataset(data_dir, mode=mode, force_reload=True,
-                         transform=normalize_transform)
+    print("\nAll datasets have been prepared successfully!")
 
-    print("All datasets have been prepared!")
 
 if __name__ == '__main__':
     main()
