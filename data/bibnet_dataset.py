@@ -1,6 +1,6 @@
 from data.transform.build import build_train_transforms, build_test_transforms
 from data.transform.transforms import ResizeWithPadding
-from data.collate_batch import collate_fn_loaders
+from data.collate_batch import collate_fn_stats
 from pathlib import Path
 from PIL import Image
 from torch.utils.data import Dataset
@@ -177,7 +177,7 @@ class BibNetDataset(Dataset):
         from torch.utils.data import DataLoader
 
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=False,
-                            num_workers=4, collate_fn=collate_fn_loaders)
+                            num_workers=4, collate_fn=collate_fn_stats)
 
         # Initialize channels sum and squared sum
         channels_sum = torch.zeros(3)
