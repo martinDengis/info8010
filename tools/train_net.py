@@ -9,7 +9,7 @@ def train(cfg):
     model = build_bibnet(cfg)
 
     data_dir = os.path.join(Path(__file__).parent.parent, 'data')
-    batch_size = cfg.get('batch_size', 16)
+    batch_size = cfg.get('training', {}).get('batch_size', 16)
     train_loader, val_loader, _ = get_data_loaders(data_dir, batch_size)
 
     optimizer = build_optimizer(cfg, model)
