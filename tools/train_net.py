@@ -9,15 +9,15 @@ def train(cfg):
     model = build_bibnet(cfg)
 
     data_dir = os.path.join(Path(__file__).parent.parent, 'data')
-    train_loader, val_loader, _ = get_data_loaders(data_dir, cfg.BATCH_SIZE)
+    batch_size = cfg.get('batch_size', 16)
+    train_loader, val_loader, _ = get_data_loaders(data_dir, batch_size)
 
     optimizer = build_optimizer(cfg, model)
     scheduler = setup_scheduler(cfg, optimizer)
 
     loss_fn = BboxLoss(
         ciou_weight=1.0,
-        dfl_weight=0.5,
-        num_bins=16
+        l1_weight=0.5,
     )
 
     do_train(
