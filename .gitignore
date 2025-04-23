@@ -2,3 +2,4 @@ dataset/
 *.h5
 __pycache__/
 config/defaults.py
+logs/
