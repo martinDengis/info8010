@@ -1,4 +1,4 @@
 dataset/
 *.h5
 __pycache__/
-defaults.py
+config/defaults.py
