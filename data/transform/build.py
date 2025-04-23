@@ -12,7 +12,6 @@ def build_transforms(cfg=None, is_train=True, data_dir=None):
     Args:
         cfg (dict, optional): Configuration dictionary.
         is_train (bool): Whether to build training transforms (with augmentations).
-        use_normalization (bool): Whether to apply normalization.
         data_dir (str, optional): Path to data directory for loading stats.
 
     Returns:
@@ -26,8 +25,8 @@ def build_transforms(cfg=None, is_train=True, data_dir=None):
     transform_list.append(AutoContrast())
 
     target_size = (640, 640)  # Default size
-    if cfg and hasattr(cfg, 'INPUT') and hasattr(cfg.INPUT, 'SIZE'):
-        target_size = cfg.INPUT.SIZE
+    if cfg and 'input' in cfg and 'size' in cfg['input']:
+        target_size = cfg['input']['size']
     transform_list.append(ResizeWithPadding(target_size))
 
     # ----- Data Augmentation (for training) -----
