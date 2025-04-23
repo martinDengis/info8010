@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from utils.loss_utils import ciou_loss, distribution_focal_loss
+from utils import ciou_loss
 
 class BboxLoss(nn.Module):
     def __init__(self, ciou_weight=1.0, l1_weight=1.0, num_classes=1, reduction='mean'):
