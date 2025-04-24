@@ -4,53 +4,60 @@ from config import *
 
 def log_metrics(metrics, step=None):
     """
-    Log metrics to wandb
+    Log metrics to wandb if a run is active
 
     Args:
         metrics (dict): Dictionary of metrics to log
         step (int, optional): Step number for logging
     """
-    wandb.log(metrics, step=step)
+    if wandb.run is not None:
+        wandb.log(metrics, step=step)
 
 
 def log_summary(metrics, step=None):
     """
-    Log summary metrics to wandb
+    Log summary metrics to wandb if a run is active
 
     Args:
         metrics (dict): Dictionary of summary metrics to log
         step (int, optional): Step number for logging
     """
-    keys = list(metrics.keys())
-    values = list(metrics.values())
-    for i in range(len(keys)):
-        wandb.run.summary[keys[i]] = values[i]
+    if wandb.run is not None:
+        keys = list(metrics.keys())
+        values = list(metrics.values())
+        for i in range(len(keys)):
+            wandb.run.summary[keys[i]] = values[i]
 
 
 def log_model(model_path, aliases=None):
     """
-    Log model to wandb
+    Log model to wandb if a run is active
 
     Args:
         model_path (str): Path to the model file
         aliases (list, optional): List of aliases for the model
     """
-    wandb.save(model_path)
-    if aliases:
-        artifact = wandb.Artifact('model', type='model')
-        artifact.add_file(model_path)
-        for alias in aliases:
-            wandb.log_artifact(artifact, aliases=[alias])
+    if wandb.run is not None:
+        wandb.save(model_path)
+        if aliases:
+            artifact = wandb.Artifact('model', type='model')
+            artifact.add_file(model_path)
+            for alias in aliases:
+                wandb.log_artifact(artifact, aliases=[alias])
 
 
 def finish_run():
-    """Close the current wandb run"""
-    wandb.finish()
+    """Close the current wandb run if one exists"""
+    if wandb.run is not None:
+        wandb.finish()
 
 
-def get_sweep_config():
+def get_sweep_config(model_type='bibnet'):
     """
-    Get a WandB sweep configuration for BibNet hyperparameter tuning.
+    Get a WandB sweep configuration for BibNet/BibC3Net hyperparameter tuning.
+
+    Args:
+        model_type (str): Type of model to configure ('bibnet' or 'bibc3net')
 
     Returns:
         dict: A WandB sweep configuration
@@ -62,23 +69,10 @@ def get_sweep_config():
             "goal": "minimize"
         },
         "parameters": {
-            # Model parameters
-            "model.backbone_channels": {"values": [
-                [32, 64, 128, 256],
-                [64, 128, 256, 512],
-                [128, 256, 512, 1024]
-            ]},
-            "model.neck_channels": {"values": [128, 256, 512]},
-            "model.num_res_blocks": {"values": [
-                [1, 2, 8, 8],
-                [2, 4, 8, 8],
-                [1, 2, 4, 4]
-            ]},
-
-            # Optimizer parameters
+            # Shared parameters for both models
             "optimizer.type": {"values": ["adam", "radam"]},
-            "optimizer.learning_rate": {"distribution": "log_uniform", "min": -5, "max": -2},  # 1e-5 to 1e-2
-            "optimizer.weight_decay": {"distribution": "log_uniform", "min": -6, "max": -3}, # 1e-6 to 1e-3
+            "optimizer.learning_rate": {"distribution": "log_uniform_values", "min": 1e-5, "max": 1e-2},
+            "optimizer.weight_decay": {"distribution": "log_uniform_values", "min": 1e-6, "max": 1e-3},
 
             # Scheduler parameters
             "scheduler.type": {"values": ["step", "cosine"]},
@@ -92,23 +86,68 @@ def get_sweep_config():
             "early_stopping.patience": {"values": [5, 10, 15]},
 
             # Training parameters
-            "training.batch_size": {"values": [8, 16]},
+            # "training.batch_size": {"values": [8, 16, 32]},
             "training.num_epochs": {"values": [100, 150]},
         }
     }
 
+    # Model-specific parameters
+    if model_type == 'bibnet':
+        # BibNet-specific parameters
+        sweep_config["parameters"].update({
+            "model.backbone_channels": {"values": [
+                [32, 64, 128, 256],
+                [64, 128, 256, 512],
+                [128, 256, 512, 1024]
+            ]},
+            "model.neck_channels": {"values": [128, 256, 512]},
+            "model.num_res_blocks": {"values": [
+                [1, 2, 8, 8],
+                [2, 4, 8, 8],
+                [1, 2, 4, 4]
+            ]},
+        })
+    elif model_type == 'bibc3net':
+        # BibC3Net-specific parameters
+        sweep_config["parameters"].update({
+            "model.channels_list": {"values": [
+                [32, 64, 128, 256],
+                [64, 128, 256, 512],
+                [128, 256, 512, 1024]
+            ]},
+            "model.num_c3_blocks": {"values": [
+                [1, 2, 3, 4],
+                [2, 3, 4, 5],
+                [1, 2, 2, 3]
+            ]},
+            "model.bottleneck_ratio": {"values": [0.3, 0.5, 0.7]},
+            "model.feature_size": {"values": [(8, 8), (16, 16), (32, 32)]},
+            "model.max_detections": {"values": [50, 100, 150]},
+            "model.use_spp": {"values": [True, False]},
+        })
+
     return sweep_config
 
 
-def main():
+def main(model_type=None):
     # Get default configuration
     cfg = get_cfg_defaults()
     entity = cfg["wandb"]["entity"]
     project = cfg["wandb"]["project"]
-    group = cfg["wandb"]["group"]
+    
+    # Override model type if specified
+    if model_type is not None:
+        cfg["model"]["type"] = model_type
+        
+    # Get model type from config
+    model_type = cfg["model"]["type"]
+    
+    # Set group based on model_type
+    group = f"{model_type}-runs"
+    cfg["wandb"]["group"] = group
 
     # Get sweep configuration
-    sweep_config = get_sweep_config()
+    sweep_config = get_sweep_config(model_type)
 
     # Initialize sweep
     sweep_id = wandb.sweep(sweep_config, project=cfg["wandb"]["project"])
