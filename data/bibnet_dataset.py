@@ -111,7 +111,7 @@ class BibNetDataset(Dataset):
         with h5py.File(self.h5_file_path, 'w') as h5f:
             # Create datasets
             image_dset = h5f.create_dataset(
-                "images", (num_images, 3, 640, 640), dtype=np.float32)
+                "images", (num_images, 3, 512, 512), dtype=np.float32)
             bbox_dset = h5f.create_dataset(
                 "bboxes", (num_images, max_boxes, 4), dtype=np.float32)
             label_dset = h5f.create_dataset(
@@ -152,7 +152,7 @@ class BibNetDataset(Dataset):
         print(f"Successfully created H5 dataset at {self.h5_file_path}")
 
     @staticmethod
-    def calculate_dataset_stats(data_dir, mode="train", batch_size=32):
+    def calculate_dataset_stats(data_dir, mode="train", batch_size=32, force_reload=False):
         """
         Calculate the mean and standard deviation of the dataset.
 
@@ -168,10 +168,10 @@ class BibNetDataset(Dataset):
             data_dir=data_dir,
             mode=mode,
             transform=transforms.Compose([
-                ResizeWithPadding((640, 640)),
+                ResizeWithPadding((512, 512)),
                 transforms.ToTensor()
             ]),
-            force_reload=False
+            force_reload=force_reload
         )
 
         from torch.utils.data import DataLoader

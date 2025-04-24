@@ -8,11 +8,11 @@ from data.transform.build import build_train_transforms, build_test_transforms
 
 def main():
     parser = argparse.ArgumentParser(description='Prepare BibNet dataset')
-    parser.add_argument('--data_dir', type=str, required=True,
+    parser.add_argument('--data_dir', type=str, default='/data/', required=True,
                         help='Path to the data directory')
-    parser.add_argument('--force_reload', action='store_true',
+    parser.add_argument('--force_reload', action='store_true', default=True,
                         help='Force regeneration of H5 files')
-    parser.add_argument('--calculate_stats', action='store_true',
+    parser.add_argument('--calculate_stats', action='store_true', default=True,
                         help='Calculate dataset statistics (mean, std) and save to JSON file')
     args = parser.parse_args()
 
@@ -26,7 +26,7 @@ def main():
         print("========================================")
         # stats will be calculated on training set w/ only ToTensor transform
         mean, std = BibNetDataset.calculate_dataset_stats(
-            data_dir, mode='train')
+            data_dir, mode='train', force_reload=args.force_reload)
 
         stats = {
             "mean": mean.tolist(),

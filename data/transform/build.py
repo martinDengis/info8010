@@ -24,7 +24,7 @@ def build_transforms(cfg=None, is_train=True, data_dir=None):
     transform_list.append(AutoOrient())
     transform_list.append(AutoContrast())
 
-    target_size = (640, 640)  # Default size
+    target_size = (512, 512)  # Default size
     if cfg and 'input' in cfg and 'size' in cfg['input']:
         target_size = cfg['input']['size']
     transform_list.append(ResizeWithPadding(target_size))
