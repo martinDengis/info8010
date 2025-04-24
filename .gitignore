@@ -1,8 +1,12 @@
-dataset/
-*.h5
+# Folders
 __pycache__/
-config/defaults.py
+checkpoints/
+dataset/
 logs/
+wandb/
+
+# Files
+*.h5
+config/defaults.py
 sandbox.py
 *.sbatch
-wandb/
