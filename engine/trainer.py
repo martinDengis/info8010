@@ -14,9 +14,6 @@ def train_epoch(model, train_loader, loss_fn, optimizer, device, accumulation_st
     epoch_loss = 0.0
 
     for batch_idx, (images, targets) in enumerate(train_loader):
-        if (batch_idx + 1) % 10 == 0:
-            print(f"  Batch {batch_idx + 1}/{len(train_loader)} - Training...")
-
         images = images.to(device)
 
         with torch.set_grad_enabled(True):
@@ -108,6 +105,7 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
 
     # Training loop
     for epoch in range(num_epochs):
+        torch.cuda.empty_cache()  # Clear GPU memory
         if (epoch + 1) % 10 == 0:
             print(f"Epoch {epoch + 1}/{num_epochs} - Training...")
 
