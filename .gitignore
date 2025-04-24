@@ -5,3 +5,4 @@ config/defaults.py
 logs/
 sandbox.py
 *.sbatch
+wandb/
