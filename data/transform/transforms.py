@@ -22,7 +22,7 @@ class ResizeWithPadding(Transform):
 
     def forward(self, *inputs):
         if len(inputs) == 1:
-            # If only one input is provided, check if img or boxes
+            # If only one input is provided, check if img or bboxes
             if isinstance(inputs[0], tv_tensors.BoundingBoxes):
                 return self._forward_boxes(inputs[0])
             elif isinstance(inputs[0], (torch.Tensor, Image.Image)):
@@ -30,8 +30,8 @@ class ResizeWithPadding(Transform):
             else:
                 raise ValueError(f"Unsupported input type: {type(inputs[0])}")
         else:
-            img, boxes = inputs
-            return self._forward_img(img), self._forward_boxes(boxes)
+            img, bboxes = inputs
+            return self._forward_img(img), self._forward_boxes(bboxes)
 
     def _forward_img(self, img):
         # Get the original size of the image
@@ -76,11 +76,11 @@ class ResizeWithPadding(Transform):
             img_padded.paste(img_resized, (x_offset, y_offset))
             return img_padded
 
-    def _forward_boxes(self, boxes):
+    def _forward_boxes(self, bboxes):
         # Convert to float for safe math
-        data = boxes.as_subclass(torch.Tensor).float()
+        data = bboxes.as_subclass(torch.Tensor).float()
 
-        if boxes.format == tv_tensors.BoundingBoxFormat.XYWH:
+        if bboxes.format == tv_tensors.BoundingBoxFormat.XYWH:
             x, y, w, h = data.unbind(-1)
             x = x * self.scale_factor + self.offsets[0]
             y = y * self.scale_factor + self.offsets[1]
@@ -101,4 +101,4 @@ class ResizeWithPadding(Transform):
         else:
             canvas_size = (self.size, self.size)
 
-        return BoundingBoxes(new_data, format=boxes.format, canvas_size=canvas_size)
+        return BoundingBoxes(new_data, format=bboxes.format, canvas_size=canvas_size)
