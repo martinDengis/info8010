@@ -1,60 +1,54 @@
 import argparse
 import json
-import os
+import torch
 from pathlib import Path
+from torchvision.transforms import v2
+
 from data.bibnet_dataset import BibNetDataset
-from data.transform.build import build_train_transforms, build_test_transforms
+from data.transform.transforms import ResizeWithPadding
 
 
 def main():
     parser = argparse.ArgumentParser(description='Prepare BibNet dataset')
-    parser.add_argument('--data_dir', type=str, default='/data/', required=True,
+    parser.add_argument('--data_dir', type=str, required=True,
                         help='Path to the data directory')
-    parser.add_argument('--force_reload', action='store_true', default=True,
-                        help='Force regeneration of H5 files')
-    parser.add_argument('--calculate_stats', action='store_true', default=True,
-                        help='Calculate dataset statistics (mean, std) and save to JSON file')
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
     stats_file = data_dir / "dataset" / "dataset_stats.json"
 
-    # Phase 1: Calculate dataset statistics if needed
-    if args.calculate_stats or not os.path.exists(stats_file):
-        print("\n========================================")
-        print("Calculating dataset statistics...")
-        print("========================================")
-        # stats will be calculated on training set w/ only ToTensor transform
-        mean, std = BibNetDataset.calculate_dataset_stats(
-            data_dir, mode='train', force_reload=args.force_reload)
-
-        stats = {
-            "mean": mean.tolist(),
-            "std": std.tolist()
-        }
-        with open(stats_file, 'w') as f:
-            json.dump(stats, f)
-        print(f"Statistics saved to {stats_file}")
-
-    # Phase 2: Create datasets with transforms
+    # Create datasets (h5py files) for train, valid, and test
+    # and calculate statistics for (later) normalization
     print("\n========================================")
-    print("Creating datasets with transforms...")
+    print("Creating h5 datasets...")
     print("========================================")
 
-    # The transforms will automatically use the dataset stats if available
     for mode in ['train', 'valid', 'test']:
         print(f"Building {mode} dataset...")
-        if mode == 'train':
-            transform = build_train_transforms(data_dir=data_dir)
-        else:
-            transform = build_test_transforms(data_dir=data_dir)
 
-        BibNetDataset(
-            data_dir=data_dir,
-            mode=mode,
-            transform=transform,
-            force_reload=args.force_reload
-        )
+        if mode == 'train':
+            # stats will be calculated on training set while building the dataset
+            mean, std = BibNetDataset.calculate_dataset_stats(data_dir, mode='train')
+
+            stats = {
+                "mean": mean.tolist(),
+                "std": std.tolist()
+            }
+            with open(stats_file, 'w') as f:
+                json.dump(stats, f)
+            print(f"Statistics saved to {stats_file}")
+        else:
+            BibNetDataset(
+                data_dir=data_dir,
+                mode=mode,
+                transform=v2.Compose([  # same transform as for the calculation of stats
+                    ResizeWithPadding((512, 512)),
+                    v2.ToImage(),
+                    v2.ToDtype(torch.float32, scale=True)
+                ]),
+                force_reload=True
+            )
+
         print(f"Completed {mode} dataset creation.")
 
     print("\nAll datasets have been prepared successfully!")
