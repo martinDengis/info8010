@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from utils import ciou_loss
+from utils.loss_utils import ciou_loss
 
 class BboxLoss(nn.Module):
     def __init__(self, ciou_weight=1.0, l1_weight=1.0, num_classes=1, reduction='mean'):
@@ -22,8 +22,8 @@ class BboxLoss(nn.Module):
         device = preds.device
         batch_size = preds.shape[0]
 
-        # Extract ground truth data (boxes are lists of tensors)
-        gt_bboxes_list = [boxes.to(device) for boxes in batch['bboxes']]
+        # Extract ground truth data (bboxes are lists of tensors)
+        gt_bboxes_list = [bboxes.to(device) for bboxes in batch['bboxes']]
         gt_labels_list = [labels.to(device) for labels in batch['labels']]
 
         # Initialize loss accumulators
@@ -31,15 +31,15 @@ class BboxLoss(nn.Module):
         total_l1_loss = 0.0
         total_boxes = 0
 
-        # each img processed independently because of different number of gt boxes
+        # each img processed independently because of different number of gt bboxes
         for i in range(batch_size):
             if gt_bboxes_list[i].shape[0] == 0:
                 continue    # no targets for this image
 
             # TODO:
-            # Get predictions for this image's ground truth boxes
-            # This would typically involve finding the closest predicted boxes to the ground truth
-            # For simplicity, we're just using the ground truth boxes directly
+            # Get predictions for this image's ground truth bboxes
+            # This would typically involve finding the closest predicted bboxes to the ground truth
+            # For simplicity, we're just using the ground truth bboxes directly
             # Ideally, we'd need to match predictions to ground truth!!
 
             num_gt = gt_bboxes_list[i].shape[0]

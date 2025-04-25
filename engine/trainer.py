@@ -1,7 +1,7 @@
 import torch
 import os
 import time
-from utils import log_metrics, log_model, log_summary
+from utils.wandb_integration import log_metrics, log_model, log_summary
 
 
 # ==============================
@@ -21,7 +21,7 @@ def train_epoch(model, train_loader, loss_fn, optimizer, device, accumulation_st
 
             batch_dict = {
                 'images': images,
-                'bboxes': [t['boxes'] for t in targets],
+                'bboxes': [t['bboxes'] for t in targets],
                 'labels': [t['labels'] for t in targets]
             }
             loss = loss_fn(batch_dict, predictions)
@@ -50,7 +50,7 @@ def validate(model, val_loader, loss_fn, device):
 
             batch_dict = {
                 'images': images,
-                'bboxes': [t['boxes'] for t in targets],
+                'bboxes': [t['bboxes'] for t in targets],
                 'labels': [t['labels'] for t in targets]
             }
             loss = loss_fn(batch_dict, predictions)

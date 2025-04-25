@@ -136,13 +136,13 @@ class BoundingBoxPredictor(nn.Module):
         x = self.pre_conv(x)
 
         # Predict boxes
-        boxes = self.fc_layers(x)
+        bboxes = self.fc_layers(x)
         # Reshape to [batch_size, max_detections, num_coords]
-        boxes = boxes.view(-1, self.max_detections, self.num_coords)
+        bboxes = bboxes.view(-1, self.max_detections, self.num_coords)
         # Apply sigmoid to normalize coordinates to [0, 1]
-        boxes = torch.sigmoid(boxes)
+        bboxes = torch.sigmoid(bboxes)
 
-        return boxes
+        return bboxes
 
 
 class BibC3Net(nn.Module):
