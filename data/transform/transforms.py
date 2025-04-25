@@ -78,6 +78,7 @@ class ResizeWithPadding(Transform):
 
     def _forward_boxes(self, bboxes):
         # Convert to float for safe math
+        assert isinstance(bboxes, tv_tensors.BoundingBoxes), f"Input must be a BoundingBoxes object, got {type(bboxes)}"
         data = bboxes.as_subclass(torch.Tensor).float()
 
         if bboxes.format == tv_tensors.BoundingBoxFormat.XYWH:
