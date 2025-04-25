@@ -1,57 +1,55 @@
 import torch
 import matplotlib.pyplot as plt
-import numpy as np
-from PIL import Image
-from torchvision import transforms
+from torchvision import tv_tensors
+from torchvision.utils import draw_bounding_boxes
+from torchvision.transforms.v2 import functional as F
 
 
-def plot_tensor_as_img(t):
-    """
-    Plot a tensor as an image.
+def plot_img(imgs, row_title=None, save_path=None, **imshow_kwargs):
+    if not isinstance(imgs[0], list):
+        # Make a 2d grid even if there's just 1 row
+        imgs = [imgs]
 
-    Args:
-        t (torch.Tensor): Input tensor of shape (C, H, W) or (H, W, C)
-    """
-    if t.dim() == 3:
-        if t.size(0) == 3:  # C, H, W
-            t = t.permute(1, 2, 0)  # H, W, C
-        elif t.size(0) == 1:  # H, W
-            t = t.squeeze(0)  # H, W
-        else:
-            raise ValueError("Tensor must be of shape (C, H, W) or (H, W)")
+    num_rows = len(imgs)
+    num_cols = len(imgs[0])
+    _, axs = plt.subplots(nrows=num_rows, ncols=num_cols, squeeze=False)
+    for row_idx, row in enumerate(imgs):
+        for col_idx, img in enumerate(row):
+            bboxes = None
+            masks = None
+            if isinstance(img, tuple):
+                img, target = img
+                if isinstance(target, dict):
+                    bboxes = target.get("bboxes")
+                elif isinstance(target, tv_tensors.BoundingBoxes):
+                    bboxes = target
+                else:
+                    raise ValueError(f"Unexpected target type: {type(target)}")
+            img = F.to_image(img)
+            if img.dtype.is_floating_point and img.min() < 0:
+                # Poor man's re-normalization for the colors to be OK-ish. This
+                # is useful for images coming out of Normalize()
+                img -= img.min()
+                img /= img.max()
 
-    plt.imshow(t.numpy())
-    plt.axis('off')
+            img = F.to_dtype(img, torch.uint8, scale=True)
+            if bboxes is not None:
+                assert isinstance(bboxes, tv_tensors.BoundingBoxes), f"Expected BoundingBoxes, got {type(bboxes)}"
+                # Convert bboxes to xyxy format for draw_bounding_boxes
+                if bboxes.format == tv_tensors.BoundingBoxFormat.XYWH:
+                    bboxes = F.convert_bounding_box_format(bboxes, new_format="xyxy")
+
+                img = draw_bounding_boxes(img, bboxes, colors="yellow", width=3)
+
+            ax = axs[row_idx, col_idx]
+            ax.imshow(img.permute(1, 2, 0).numpy(), **imshow_kwargs)
+            ax.set(xticklabels=[], yticklabels=[], xticks=[], yticks=[])
+
+    if row_title is not None:
+        for row_idx in range(num_rows):
+            axs[row_idx, 0].set(ylabel=row_title[row_idx])
+
+    plt.tight_layout()
     plt.show()
-
-
-def plot_img_with_boxes(img, boxes, labels=None, save_path=None):
-    """
-    Plot an image with bounding boxes.
-
-    Args:
-        img (PIL.Image or np.ndarray): Input image.
-        boxes (list of tuples): List of bounding boxes in the format [(x1, y1, x2, y2), ...].
-        labels (list of str, optional): List of labels for each bounding box.
-    """
-    if isinstance(img, torch.Tensor):
-        img = transforms.ToPILImage()(img)
-
-    plt.imshow(img)
-    ax = plt.gca()
-
-    for i, box in enumerate(boxes):
-        x1, y1, x2, y2 = box
-        rect = plt.Rectangle((x1, y1), x2 - x1, y2 - y1,
-                             linewidth=2, edgecolor='r', facecolor='none')
-        ax.add_patch(rect)
-        if labels is not None:
-            ax.text(x1, y1, labels[i], color='white', fontsize=12,
-                    bbox=dict(facecolor='red', alpha=0.5))
-
-    plt.axis('off')
-    if save_path:
-        plt.savefig(save_path, bbox_inches='tight')
-    else:
-        plt.show()
-    return plt.gcf()
+    if save_path is not None:
+        plt.savefig(save_path, bbox_inches="tight")

@@ -139,7 +139,7 @@ def distribution_focal_loss(box_preds, box_targets, num_bins=16, reduction='mean
     orig_shape = box_preds.shape
 
     # For standard implementation with no distribution dimension
-    if len(box_preds.shape) <= 3:  # [batch, boxes, 4] or [boxes, 4]
+    if len(box_preds.shape) <= 3:  # [batch, bboxes, 4] or [bboxes, 4]
         # Flatten to 2D: (total_boxes, 4)
         if len(box_preds.shape) == 3:
             box_preds_flat = box_preds.reshape(-1, 4)
@@ -164,15 +164,15 @@ def distribution_focal_loss(box_preds, box_targets, num_bins=16, reduction='mean
         else:  # mean
             return loss.mean()
 
-    # Full DFL implementation when predictions include distribution dimension [batch, boxes, 4, bins]
+    # Full DFL implementation when predictions include distribution dimension [batch, bboxes, 4, bins]
     else:
         orig_batch_size = orig_shape[0]
         orig_num_boxes = orig_shape[1]
         total_coords = orig_batch_size * orig_num_boxes * 4
 
         # Reshape predictions for processing
-        box_preds = box_preds.reshape(-1, num_bins)  # to [batch*boxes*4, bins]
-        box_targets = box_targets.reshape(-1)  # to [batch*boxes*4]
+        box_preds = box_preds.reshape(-1, num_bins)  # to [batch*bboxes*4, bins]
+        box_targets = box_targets.reshape(-1)  # to [batch*bboxes*4]
 
         # Scale target to range [0, num_bins-1]
         box_targets = box_targets * (num_bins - 1)
