@@ -22,7 +22,13 @@ class ResizeWithPadding(Transform):
 
     def forward(self, *inputs):
         if len(inputs) == 1:
-            return self._forward_img(inputs[0])
+            # If only one input is provided, check if img or boxes
+            if isinstance(inputs[0], tv_tensors.BoundingBoxes):
+                return self._forward_boxes(inputs[0])
+            elif isinstance(inputs[0], (torch.Tensor, Image.Image)):
+                return self._forward_img(inputs[0])
+            else:
+                raise ValueError(f"Unsupported input type: {type(inputs[0])}")
         else:
             img, boxes = inputs
             return self._forward_img(img), self._forward_boxes(boxes)
