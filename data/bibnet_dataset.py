@@ -20,7 +20,7 @@ from utils.img_utils import img_tensor2np, img_np2tensor
 class BibNetDataset(Dataset):
     """Dataset for bib number detection using COCO format annotations."""
 
-    def __init__(self, data_dir, mode="train", transform=None, force_reload=False):
+    def __init__(self, data_dir, mode="train", transform=None, force_reload=False, stats_mode=False):
         """
         Initialize the BibNetDataset.
 
@@ -32,6 +32,7 @@ class BibNetDataset(Dataset):
         """
         self.data_dir = Path(data_dir)
         self.mode = mode
+        self.stats_mode = stats_mode
 
         # Transform to apply during __getitem__
         self.transform = transform
@@ -57,7 +58,7 @@ class BibNetDataset(Dataset):
     def __getitem__(self, idx):
         with h5py.File(self.h5_file_path, 'r') as h5f:
             # Load image
-            image = torch.Tensor(h5f["images"][idx], dtype=torch.float32)
+            image = torch.tensor(h5f["images"][idx], dtype=torch.float32)
             height, width = image.shape[-2:]
 
             # Load bounding boxes and labels
@@ -80,7 +81,7 @@ class BibNetDataset(Dataset):
                 )
 
             # Apply transformations
-            if self.transform is not None:
+            if self.transform is not None and not self.stats_mode:
                 image, bboxes = self.transform(image, bboxes)
 
             # Create target dict
@@ -136,6 +137,10 @@ class BibNetDataset(Dataset):
 
             # Process each (image, annotations) pairs
             for idx, image_id in enumerate(tqdm(image_ids, desc=f"Processing {self.mode} images")):
+                anns = annotations_by_image.get(image_id, [])
+                if not anns:    # if no annotations for this image, skip it
+                    continue
+
                 image_filename = image_id_to_file[image_id]
                 image_path = self.dataset_dir / image_filename
 
@@ -150,8 +155,6 @@ class BibNetDataset(Dataset):
 
                 height, width = org_img.shape[-2:]
                 orig_sizes_dset[idx] = np.array([height, width])
-
-                anns = annotations_by_image.get(image_id, [])
                 num_boxes_dset[idx] = len(anns)
 
                 # Fill in bounding boxes and labels
@@ -192,18 +195,19 @@ class BibNetDataset(Dataset):
         dataset = BibNetDataset(
             data_dir=data_dir,
             mode=mode,
-            transform=v2.Compose([
-                ResizeWithPadding((512, 512)),
-                v2.ToImage(),
-                v2.ToDtype(torch.float32, scale=True)
-            ]),
-            force_reload=True
+            transform=None,
+            force_reload=False,
+            stats_mode=True
         )
-
         from torch.utils.data import DataLoader
 
-        loader = DataLoader(dataset, batch_size=batch_size, shuffle=False,
-                            num_workers=4, collate_fn=collate_fn_stats)
+        loader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=0,
+            collate_fn=collate_fn_stats
+        )
 
         # Initialize channels sum and squared sum
         channels_sum = torch.zeros(3)

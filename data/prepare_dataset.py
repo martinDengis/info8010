@@ -26,9 +26,19 @@ def main():
     for mode in ['train', 'valid', 'test']:
         print(f"Building {mode} dataset...")
 
+        BibNetDataset(
+            data_dir=data_dir,
+            mode=mode,
+            transform=v2.Compose([
+                ResizeWithPadding((512, 512)),
+                v2.ToImage(),
+                v2.ToDtype(torch.float32, scale=True)
+            ]),
+            force_reload=True
+        )
         if mode == 'train':
-            # stats will be calculated on training set while building the dataset
-            mean, std = BibNetDataset.calculate_dataset_stats(data_dir, mode='train')
+            # stats will be calculated on training set
+            mean, std = BibNetDataset.calculate_dataset_stats(data_dir=data_dir, mode='train')
 
             stats = {
                 "mean": mean.tolist(),
@@ -37,17 +47,6 @@ def main():
             with open(stats_file, 'w') as f:
                 json.dump(stats, f)
             print(f"Statistics saved to {stats_file}")
-        else:
-            BibNetDataset(
-                data_dir=data_dir,
-                mode=mode,
-                transform=v2.Compose([  # same transform as for the calculation of stats
-                    ResizeWithPadding((512, 512)),
-                    v2.ToImage(),
-                    v2.ToDtype(torch.float32, scale=True)
-                ]),
-                force_reload=True
-            )
 
         print(f"Completed {mode} dataset creation.")
 
