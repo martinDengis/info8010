@@ -1,8 +1,9 @@
 import os
 import json
 from pathlib import Path
-import torchvision.transforms as T
-from .transforms import AutoOrient, ResizeWithPadding, AutoContrast, Cutout, AddGaussianNoise
+import torch
+from torchvision.transforms import v2
+from .transforms import ResizeWithPadding
 
 
 def build_transforms(cfg=None, is_train=True, data_dir=None):
@@ -21,8 +22,8 @@ def build_transforms(cfg=None, is_train=True, data_dir=None):
 
     # ----- Image Preprocessing -----
     # Auto-orient, auto-contrast and resize with padding
-    transform_list.append(AutoOrient())
-    transform_list.append(AutoContrast())
+    # transform_list.append(AutoOrient())
+    # transform_list.append(AutoContrast())
 
     target_size = (512, 512)  # Default size
     if cfg and 'input' in cfg and 'size' in cfg['input']:
@@ -43,23 +44,24 @@ def build_transforms(cfg=None, is_train=True, data_dir=None):
     """
     if is_train:
         transform_list.extend([
-            T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
-            T.RandomAdjustSharpness(sharpness_factor=2, p=0.3),
-            T.RandomAffine(degrees=15, translate=(0.1, 0.1)),
-            T.RandomPerspective(distortion_scale=0.2, p=0.5),
-            T.RandomApply(
-                [T.GaussianBlur(kernel_size=5, sigma=(0.1, 2.0))], p=0.3),
+            v2.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+            v2.RandomAdjustSharpness(sharpness_factor=2, p=0.3),
+            v2.RandomAffine(degrees=15, translate=(0.1, 0.1)),
+            v2.RandomPerspective(distortion_scale=0.2, p=0.5),
+            v2.RandomApply(
+                [v2.GaussianBlur(kernel_size=5, sigma=(0.1, 2.0))], p=0.3),
             # T.RandomGrayscale(p=0.1), # may not be necessary -> test it
-            Cutout(n_holes=2, length=(30, 80), p=0.3),
-            AddGaussianNoise(mean=0., std=0.1, p=0.3)
+            # Cutout(n_holes=2, length=(30, 80), p=0.3),
+            # AddGaussianNoise(mean=0., std=0.1, p=0.3)
         ])
 
     # Convert to tensor
-    transform_list.append(T.ToTensor())
+    transform_list.append(v2.ToImage())
+    transform_list.append(v2.ToDtype(torch.float32, scale=True))
 
     # Add normalization
     # Default ImageNet normalization as fallback
-    imagenet_norm = T.Normalize(
+    imagenet_norm = v2.Normalize(
         mean=[0.485, 0.456, 0.406],
         std=[0.229, 0.224, 0.225]
     )
@@ -71,7 +73,7 @@ def build_transforms(cfg=None, is_train=True, data_dir=None):
             with open(stats_file, 'r') as f:
                 stats = json.load(f)
             mean, std = stats["mean"], stats["std"]
-            transform_list.append(T.Normalize(mean=mean, std=std))
+            transform_list.append(v2.Normalize(mean=mean, std=std))
             print(f"Using dataset-specific normalization from {stats_file}")
         else:
             transform_list.append(imagenet_norm)
@@ -79,7 +81,7 @@ def build_transforms(cfg=None, is_train=True, data_dir=None):
     else:
         transform_list.append(imagenet_norm)
 
-    return T.Compose(transform_list)
+    return v2.Compose(transform_list)
 
 
 def build_train_transforms(cfg=None, data_dir=None):
