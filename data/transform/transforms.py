@@ -1,203 +1,98 @@
+import numbers
+import numpy as np
 import torch
 from PIL import Image, ImageOps
-import torchvision.transforms.functional as F
+from torchvision import tv_tensors
+from torchvision.tv_tensors import BoundingBoxes
+from torchvision.transforms import v2
+from torchvision.transforms.v2 import functional as F, Transform
 
 
-class AutoOrient(object):
-    """
-    Auto-orient image based on EXIF data.
-    """
-
-    def __call__(self, img):
-        if isinstance(img, Image.Image):
-            return ImageOps.exif_transpose(img)
-        return img
-
-    def __repr__(self):
-        return self.__class__.__name__ + '()'
-
-
-class AutoContrast(object):
-    """
-    Apply automatic contrast enhancement to the image.
-
-    Args:
-        cutoff (float): Percentage of pixels to cut off from histogram. Default is 0.
-        ignore (list): List of pixel values to ignore. Default is None.
-    """
-
-    def __init__(self, cutoff=0, ignore=None):
-        self.cutoff = cutoff
-        self.ignore = ignore
-
-    def __call__(self, img):
-        if isinstance(img, Image.Image):
-            return ImageOps.autocontrast(img, cutoff=self.cutoff, ignore=self.ignore)
-        return img
-
-    def __repr__(self):
-        return self.__class__.__name__ + f'(cutoff={self.cutoff}, ignore={self.ignore})'
-
-
-class ResizeWithPadding(object):
-    """
-    Resize the input image to the specified size while maintaining aspect ratio,
-    padding with black (zeros) as needed.
-
-    Args:
-        size (tuple): Target size (height, width)
-        fill (int or tuple): Fill value for padding. Default is 0 (black).
-        padding_mode (str): Type of padding. Default is 'constant'.
-    """
-
-    def __init__(self, size, fill=0, padding_mode='constant'):
-        self.size = size if isinstance(size, (list, tuple)) else (size, size)
+# class that inherits from Transform
+# and pads the image to a square but keeps the aspect ratio
+class ResizeWithPadding(Transform):
+    def __init__(self, size, fill=0, padding_mode="constant"):
+        super().__init__()
+        self.size = size
         self.fill = fill
         self.padding_mode = padding_mode
 
-    def __call__(self, img):
-        if not isinstance(img, Image.Image):
-            return img
+    def _get_params(self, flat_inputs):
+        return {}
 
-        width, height = img.size
-        target_height, target_width = self.size
-
-        # Calculate scaling factor
-        scale = min(target_height / height, target_width / width)
-        new_height, new_width = int(height * scale), int(width * scale)
-
-        # Resize while preserving aspect ratio
-        resized_img = img.resize((new_width, new_height), Image.BILINEAR)
-
-        # Create a new black image with the target size
-        padded_img = Image.new('RGB', (target_width, target_height), self.fill)
-
-        # Paste the resized image onto the padded image, centered
-        paste_x = (target_width - new_width) // 2
-        paste_y = (target_height - new_height) // 2
-        padded_img.paste(resized_img, (paste_x, paste_y))
-
-        return padded_img
-
-    def __repr__(self):
-        return self.__class__.__name__ + f'(size={self.size}, fill={self.fill}, padding_mode={self.padding_mode})'
-
-
-class AddGaussianNoise(object):
-    """
-    Add Gaussian noise to image.
-
-    Args:
-        mean (float): Mean of the Gaussian noise
-        std (float): Standard deviation of the Gaussian noise
-        p (float): Probability of applying this transform
-    """
-
-    def __init__(self, mean=0., std=1., p=0.5):
-        self.mean = mean
-        self.std = std
-        self.p = p
-
-    def __call__(self, img):
-        if torch.rand(1) < self.p:
-            if isinstance(img, torch.Tensor):
-                noise = torch.randn_like(img) * self.std + self.mean
-                return torch.clamp(img + noise, 0, 1)
-            else:
-                # convert to tensor, add noise, convert back
-                img_tensor = F.to_tensor(img)
-                noise = torch.randn_like(img_tensor) * self.std + self.mean
-                noisy_img = torch.clamp(img_tensor + noise, 0, 1)
-                return F.to_pil_image(noisy_img)
-        return img
-
-    def __repr__(self):
-        return self.__class__.__name__ + f'(mean={self.mean}, std={self.std}, p={self.p})'
-
-
-class Cutout(object):
-    """
-    Apply cutout augmentation to images.
-
-    This creates random rectangular masks on the image, simulating occlusions that
-    might occur in race photos (e.g., when parts of bibs are covered by arms, other
-    runners, or race elements).
-
-    Args:
-        n_holes (int): Number of holes/patches to cut out
-        length (int or tuple): Length of the holes. If tuple (min_length, max_length),
-                              randomly samples length for each hole.
-        p (float): Probability of applying cutout
-    """
-
-    def __init__(self, n_holes=1, length=50, p=0.5):
-        self.n_holes = n_holes
-        self.length = length if isinstance(length, tuple) else (length, length)
-        self.p = p
-
-    def __call__(self, img):
-        if torch.rand(1) >= self.p:
-            return img
-
-        if isinstance(img, Image.Image):
-            img_tensor = F.to_tensor(img)
-            h, w = img_tensor.shape[1], img_tensor.shape[2]
-            mask = torch.ones_like(img_tensor)
-
-            for _ in range(self.n_holes):
-                # Sample random length if it's a tuple
-                if isinstance(self.length, tuple):
-                    length = torch.randint(
-                        self.length[0], self.length[1] + 1, (1,)).item()
-                else:
-                    length = self.length
-
-                # Random pos
-                y = torch.randint(0, h, (1,))
-                x = torch.randint(0, w, (1,))
-
-                # Calculate box boundaries
-                y1 = torch.clamp(y - length // 2, 0, h)
-                y2 = torch.clamp(y + length // 2, 0, h)
-                x1 = torch.clamp(x - length // 2, 0, w)
-                x2 = torch.clamp(x + length // 2, 0, w)
-
-                # Apply mask
-                mask[:, y1:y2, x1:x2] = 0
-
-            # Apply the mask
-            img_tensor = img_tensor * mask
-
-            return F.to_pil_image(img_tensor)
-        elif isinstance(img, torch.Tensor):
-            h, w = img.shape[1], img.shape[2]
-            mask = torch.ones_like(img)
-
-            for _ in range(self.n_holes):
-                # Sample random length
-                if isinstance(self.length, tuple):
-                    length = torch.randint(
-                        self.length[0], self.length[1] + 1, (1,)).item()
-                else:
-                    length = self.length
-
-                # Random position
-                y = torch.randint(0, h, (1,))
-                x = torch.randint(0, w, (1,))
-
-                # Calculate box boundaries
-                y1 = torch.clamp(y - length // 2, 0, h)
-                y2 = torch.clamp(y + length // 2, 0, h)
-                x1 = torch.clamp(x - length // 2, 0, w)
-                x2 = torch.clamp(x + length // 2, 0, w)
-
-                # Apply mask
-                mask[:, y1:y2, x1:x2] = 0
-
-            # Apply the mask
-            return img * mask
+    def forward(self, *inputs):
+        if len(inputs) == 1:
+            return self._forward_img(inputs[0])
         else:
-            return img
+            img, boxes = inputs
+            return self._forward_img(img), self._forward_boxes(boxes)
 
-    def __repr__(self):
-        return self.__class__.__name__ + f'(n_holes={self.n_holes}, length={self.length}, p={self.p})'
+    def _forward_img(self, img):
+        # Get the original size of the image
+        if isinstance(img, torch.Tensor):
+            h, w = img.shape[-2:]
+            device = img.device
+        else:  # PIL Image
+            w, h = img.size
+            device = None
+
+        # Calculate the new size while keeping the aspect ratio
+        if isinstance(self.size, (list, tuple)):
+            target_size = (self.size[0], self.size[1])
+        else:
+            target_size = (self.size, self.size)
+
+        # Calculate the scale factor to resize the image
+        scale_factor = min(target_size[1] / h, target_size[0] / w)
+        new_w = int(w * scale_factor)
+        new_h = int(h * scale_factor)
+
+        # Calculate the padding offsets
+        x_offset = (target_size[0] - new_w) // 2
+        y_offset = (target_size[1] - new_h) // 2
+
+        # Store these for the bounding box transformation
+        self.scale_factor = scale_factor
+        self.offsets = (x_offset, y_offset)
+
+        if isinstance(img, torch.Tensor):
+            # Resize the tensor
+            img_resized = F.resize(img, [new_h, new_w], antialias=True)
+            # Pad the tensor
+            padding = [x_offset, y_offset, target_size[0] - new_w - x_offset, target_size[1] - new_h - y_offset]
+            return F.pad(img_resized, padding, fill=self.fill, padding_mode=self.padding_mode)
+        else:
+            # Resize the PIL image
+            img_resized = img.resize((new_w, new_h), Image.LANCZOS)
+            # Create a new image with the target size and fill with the specified color
+            img_padded = Image.new(img.mode, target_size, self.fill)
+            # Paste the resized image into the padded image
+            img_padded.paste(img_resized, (x_offset, y_offset))
+            return img_padded
+
+    def _forward_boxes(self, boxes):
+        # Convert to float for safe math
+        data = boxes.as_subclass(torch.Tensor).float()
+
+        if boxes.format == tv_tensors.BoundingBoxFormat.XYWH:
+            x, y, w, h = data.unbind(-1)
+            x = x * self.scale_factor + self.offsets[0]
+            y = y * self.scale_factor + self.offsets[1]
+            w = w * self.scale_factor
+            h = h * self.scale_factor
+            new_data = torch.stack([x, y, w, h], dim=-1)
+        else:  # XYXY
+            x0, y0, x1, y1 = data.unbind(-1)
+            x0 = x0 * self.scale_factor + self.offsets[0]
+            y0 = y0 * self.scale_factor + self.offsets[1]
+            x1 = x1 * self.scale_factor + self.offsets[0]
+            y1 = y1 * self.scale_factor + self.offsets[1]
+            new_data = torch.stack([x0, y0, x1, y1], dim=-1)
+
+        # Rewrap with new canvas size and original format
+        if isinstance(self.size, (list, tuple)):
+            canvas_size = (self.size[0], self.size[1])  # (H, W)
+        else:
+            canvas_size = (self.size, self.size)
+
+        return BoundingBoxes(new_data, format=boxes.format, canvas_size=canvas_size)
