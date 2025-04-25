@@ -1,18 +1,20 @@
-from data.transform.build import build_train_transforms, build_test_transforms
-from data.transform.transforms import ResizeWithPadding
-from data.collate_batch import collate_fn_stats
-from pathlib import Path
-from PIL import Image
-from torch.utils.data import Dataset
-from tqdm import tqdm
-
 import h5py
 import json
 import numpy as np
 import os
-import torch
-import torchvision.transforms as transforms
+from pathlib import Path
+from tqdm import tqdm
 
+import torch
+from torch.utils.data import Dataset
+from torchvision import tv_tensors
+from torchvision.transforms import v2
+from torchvision.io import decode_image
+
+from data.transform.build import build_train_transforms, build_test_transforms
+from data.transform.transforms import ResizeWithPadding
+from data.collate_batch import collate_fn_stats
+from utils.img_utils import img_tensor2np, img_np2tensor
 
 
 class BibNetDataset(Dataset):
@@ -25,16 +27,15 @@ class BibNetDataset(Dataset):
         Args:
             data_dir (str): Path to the root data directory
             mode (str): One of 'train', 'valid', or 'test'
-            transform (callable, optional): Optional transform to be applied on images
+            transform (callable, optional): Optional transform to be applied during __getitem__
             force_reload (bool): If True, regenerate the H5 file even if it exists
         """
         self.data_dir = Path(data_dir)
         self.mode = mode
 
-        # Use custom transform if provided
-        if transform is not None:
-            self.transform = transform
-        else:  # otherwise create default transform based on mode
+        # Transform to apply during __getitem__
+        self.transform = transform
+        if transform is None:
             if mode == "train":
                 self.transform = build_train_transforms(data_dir=self.data_dir)
             else:
@@ -56,7 +57,8 @@ class BibNetDataset(Dataset):
     def __getitem__(self, idx):
         with h5py.File(self.h5_file_path, 'r') as h5f:
             # Load image
-            image = torch.from_numpy(h5f["images"][idx])
+            image = torch.Tensor(h5f["images"][idx], dtype=torch.float32)
+            height, width = image.shape[-2:]
 
             # Load bounding boxes and labels
             bboxes = torch.from_numpy(h5f["bboxes"][idx])
@@ -70,12 +72,23 @@ class BibNetDataset(Dataset):
                 bboxes = bboxes[:num_boxes]
                 labels = labels[:num_boxes]
 
+                # Convert bboxes to tv_tensors.BoundingBoxes
+                bboxes = tv_tensors.BoundingBoxes(
+                    bboxes,
+                    format="xywh",
+                    canvas_size=(height, width)
+                )
+
+            # Apply transformations
+            if self.transform is not None:
+                image, bboxes = self.transform(image, bboxes)
+
             # Create target dict
             target = {
-                "boxes": bboxes,
+                "bboxes": bboxes,
                 "labels": labels,
                 "image_id": torch.tensor([idx]),
-                "orig_size": torch.tensor(h5f["orig_sizes"][idx]),
+                "orig_size_hw": torch.tensor(h5f["orig_sizes"][idx]),
             }
 
             return image, target
@@ -126,33 +139,45 @@ class BibNetDataset(Dataset):
                 image_filename = image_id_to_file[image_id]
                 image_path = self.dataset_dir / image_filename
 
-                img = Image.open(image_path).convert("RGB")
-                img_tensor = self.transform(img)
-                image_dset[idx] = img_tensor.numpy()
+                # Decode image and apply transform
+                # Note: when this function gets executed, only ResizeWithPadding transform
+                # should actually be applied to the image and the bounding boxes
+                # to ensure they are in the same coordinate system
+                org_img = decode_image(
+                    str(image_path), mode="RGB")  # shape = [C, H, W]
+                img = self.transform(org_img)
+                image_dset[idx] = img
 
-                width, height = img.size
+                height, width = org_img.shape[-2:]
                 orig_sizes_dset[idx] = np.array([height, width])
 
                 anns = annotations_by_image.get(image_id, [])
                 num_boxes_dset[idx] = len(anns)
 
                 # Fill in bounding boxes and labels
-                boxes = np.zeros((max_boxes, 4), dtype=np.float32)
+                bboxes = np.zeros((max_boxes, 4), dtype=np.float32)
                 labels = np.zeros(max_boxes, dtype=np.int64)
                 for box_idx, ann in enumerate(anns):
                     # COCO bbox format is [x, y, width, height]
-                    # Convert to [x1, y1, x2, y2] format
                     x, y, w, h = ann["bbox"]
-                    boxes[box_idx] = [x, y, x + w, y + h]
+
+                    # Resize the bbox the same way as the image
+                    box = tv_tensors.BoundingBoxes(torch.tensor(
+                        [x, y, w, h]), format="xywh", canvas_size=(width, height))
+                    box = self.transform(box)  # Resize the bounding box
+
+                    # Save the resized bounding box in xywh format
+                    np_box = box.numpy()
+                    bboxes[box_idx] = np_box
                     labels[box_idx] = ann["category_id"]
 
-                bbox_dset[idx] = boxes
+                bbox_dset[idx] = bboxes
                 label_dset[idx] = labels
 
         print(f"Successfully created H5 dataset at {self.h5_file_path}")
 
     @staticmethod
-    def calculate_dataset_stats(data_dir, mode="train", batch_size=32, force_reload=False):
+    def calculate_dataset_stats(data_dir, mode="train", batch_size=32):
         """
         Calculate the mean and standard deviation of the dataset.
 
@@ -167,11 +192,12 @@ class BibNetDataset(Dataset):
         dataset = BibNetDataset(
             data_dir=data_dir,
             mode=mode,
-            transform=transforms.Compose([
+            transform=v2.Compose([
                 ResizeWithPadding((512, 512)),
-                transforms.ToTensor()
+                v2.ToImage(),
+                v2.ToDtype(torch.float32, scale=True)
             ]),
-            force_reload=force_reload
+            force_reload=True
         )
 
         from torch.utils.data import DataLoader
