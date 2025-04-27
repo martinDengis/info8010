@@ -91,6 +91,10 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
     best_val_loss = float('inf')
     patience_counter = 0
 
+    # Moving average for validation loss
+    ema_alpha = 0.9
+    val_loss_ema = None  # Initialize EMA tracker
+
     # Training parameters
     num_epochs = cfg.get('training', {}).get('num_epochs', 100)
     best_epoch = -1
@@ -116,11 +120,18 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
         # ----- Validation phase -----
         avg_val_loss = validate(model, val_loader, loss_fn, device)
 
+        # Calculate moving average for validation loss
+        if val_loss_ema is None:
+            val_loss_ema = avg_val_loss  # Initialize with first value
+        else:
+            val_loss_ema = ema_alpha * val_loss_ema + (1 - ema_alpha) * avg_val_loss
+
         # Log metrics
         current_lr = optimizer.param_groups[0]['lr']
         log_metrics({
             'train_loss': avg_train_loss,
             'val_loss': avg_val_loss,
+            'val_loss_ema': val_loss_ema,  # Log the EMA value
             'learning_rate': current_lr,
             'epoch': epoch
         })
@@ -129,10 +140,10 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
         if scheduler is not None:
             scheduler.step()
 
-        # Early stopping
+        # Early stopping - use EMA for more stable early stopping
         if early_stopping_enabled:
-            if avg_val_loss < best_val_loss:
-                best_val_loss = avg_val_loss
+            if val_loss_ema < best_val_loss:
+                best_val_loss = val_loss_ema
                 best_epoch = epoch
                 patience_counter = 0
                 # Save best model
@@ -160,6 +171,7 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
     summary = {
         'final_train_loss': avg_train_loss,
         'final_val_loss': avg_val_loss,
+        'final_val_loss_ema': val_loss_ema,
         'best_val_loss': best_val_loss,
         'early_stopped': early_stopped,
         'best_epoch': best_epoch,
