@@ -8,7 +8,7 @@ import os
 def train(cfg):
     # Determine which model to build based on the model type in config
     model_type = cfg.get('model', {}).get('type', 'bibnet')
-    
+
     if model_type == 'bibnet':
         model = build_bibnet(cfg)
     elif model_type == 'bibc3net':
@@ -23,14 +23,22 @@ def train(cfg):
     optimizer = build_optimizer(cfg, model)
     scheduler = setup_scheduler(cfg, optimizer)
 
-    # Get loss weights from config, with defaults
+    # Get loss parameters from config, with defaults
     loss_cfg = cfg.get('loss', {})
-    ciou_weight = loss_cfg.get('ciou_weight', 1.0)
-    l1_weight = loss_cfg.get('l1_weight', 0.5)
+    lambda_bbox = loss_cfg.get('lambda_bbox', 1.0)
+    lambda_conf = loss_cfg.get('lambda_conf', 1.0)
+    iou_threshold = loss_cfg.get('iou_threshold', 0.1)
+    conf_loss_type = loss_cfg.get('conf_loss_type', 'bce')
+    focal_alpha = loss_cfg.get('focal_alpha', 0.25)
+    focal_gamma = loss_cfg.get('focal_gamma', 2.0)
 
     loss_fn = BboxLoss(
-        ciou_weight=ciou_weight,
-        l1_weight=l1_weight,
+        lambda_bbox=lambda_bbox,
+        lambda_conf=lambda_conf,
+        iou_threshold=iou_threshold,
+        conf_loss_type=conf_loss_type,
+        focal_alpha=focal_alpha,
+        focal_gamma=focal_gamma
     )
 
     do_train(

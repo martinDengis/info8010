@@ -24,7 +24,7 @@ def train_epoch(model, train_loader, loss_fn, optimizer, device, accumulation_st
                 'bboxes': [t['bboxes'] for t in targets],
                 'labels': [t['labels'] for t in targets]
             }
-            loss = loss_fn(batch_dict, predictions)
+            loss, _ = loss_fn(batch_dict, predictions)
             loss = loss / accumulation_steps
 
             loss.backward()
@@ -53,7 +53,7 @@ def validate(model, val_loader, loss_fn, device):
                 'bboxes': [t['bboxes'] for t in targets],
                 'labels': [t['labels'] for t in targets]
             }
-            loss = loss_fn(batch_dict, predictions)
+            loss, _ = loss_fn(batch_dict, predictions)
             val_loss += loss.item()
 
     return val_loss / len(val_loader)
