@@ -113,11 +113,20 @@ class BboxLoss(nn.Module):
             pred_boxes = preds[i, :, :4]  # [N, 4] - (x, y, w, h)
             pred_conf = preds[i, :, 4]    # [N] - confidence scores
 
+            height, width = batch['images'][i].shape[-2:]
             gt_boxes = batch['bboxes'][i]  # [M_i, 4] - (x, y, w, h)
+
+            # Create a normalized copy of the ground truth boxes
+            # - for direct comparison with predictions that are also normalized
+            gt_boxes_normed = gt_boxes.clone()
+            gt_boxes_normed[:, 0] /= width   # x
+            gt_boxes_normed[:, 1] /= height  # y
+            gt_boxes_normed[:, 2] /= width   # width
+            gt_boxes_normed[:, 3] /= height  # height
 
             # Match predictions to ground truth
             matches, unmatched_preds = match_predictions_to_targets(
-                pred_boxes, gt_boxes, self.iou_threshold
+                pred_boxes, gt_boxes_normed, self.iou_threshold
             )
 
             # Initialize confidence targets with zeros (no match)
@@ -130,7 +139,7 @@ class BboxLoss(nn.Module):
 
                 # Extract matched predictions and targets
                 matched_preds = pred_boxes[matched_pred_indices]
-                matched_targets = gt_boxes[matched_target_indices]
+                matched_targets = gt_boxes_normed[matched_target_indices]
 
                 # Compute box regression loss (SmoothL1)
                 bbox_loss = self.smooth_l1(matched_preds, matched_targets)
@@ -163,4 +172,5 @@ class BboxLoss(nn.Module):
             'conf_loss': total_conf_loss
         }
 
+        print(f"total_loss: {total_loss.item() = }, {loss_dict = }")
         return total_loss, loss_dict
