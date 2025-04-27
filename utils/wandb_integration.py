@@ -88,6 +88,9 @@ def get_sweep_config(model_type='bibnet'):
             # Training parameters
             # "training.batch_size": {"values": [8, 16, 32]},
             "training.num_epochs": {"values": [100, 150]},
+
+            # Loss parameters
+            "loss.conf_loss_type": {"values": ["bce", "focal"]},
         }
     }
 
