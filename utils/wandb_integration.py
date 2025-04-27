@@ -1,5 +1,5 @@
 import wandb
-from config import *
+from config import get_cfg_defaults
 
 
 def log_metrics(metrics, step=None):
@@ -145,7 +145,7 @@ def main(model_type=None):
     if model_type is not None:
         cfg["model"]["type"] = model_type
 
-    # Get model type from config
+    # Model type from config
     model_type = cfg["model"]["type"]
 
     # Set group based on model_type
