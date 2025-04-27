@@ -14,7 +14,6 @@ from torchvision.io import decode_image
 from data.transform.build import build_train_transforms, build_test_transforms
 from data.transform.transforms import ResizeWithPadding
 from data.collate_batch import collate_fn_stats
-from utils.img_utils import img_tensor2np, img_np2tensor
 
 
 class BibNetDataset(Dataset):
@@ -195,7 +194,10 @@ class BibNetDataset(Dataset):
         dataset = BibNetDataset(
             data_dir=data_dir,
             mode=mode,
-            transform=None,
+            transform=v2.Compose([  # essentially no transform
+                v2.ToImage(),
+                v2.ToDtype(torch.float32, scale=True)
+            ]),
             force_reload=False,
             stats_mode=True
         )
