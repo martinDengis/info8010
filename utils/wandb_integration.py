@@ -110,21 +110,24 @@ def get_sweep_config(model_type='bibnet'):
     elif model_type == 'bibc3net':
         # BibC3Net-specific parameters
         sweep_config["parameters"].update({
-            "model.channels_list": {"values": [
-                [32, 64, 128, 256],
-                [64, 128, 256, 512],
-                [128, 256, 512, 1024]
+            "model.max_detections": {"values": [5, 10, 15]},
+            "model.p_blocks": {"values": [2, 3, 4]},
+            "model.c_blocks": {"values": [1, 2, 3]},
+            # need to make sure each feature_channels has same lenght as corresponding p_blocks value
+            "model.feature_channels": {"values": [
+                [32, 64],                 # For p_blocks=2
+                [32, 64, 128],            # For p_blocks=3
+                [32, 64, 128, 256]        # For p_blocks=4
             ]},
-            "model.num_c3_blocks": {"values": [
-                [1, 2, 3, 4],
-                [2, 3, 4, 5],
-                [1, 2, 2, 3]
-            ]},
-            "model.bottleneck_ratio": {"values": [0.3, 0.5, 0.7]},
-            "model.feature_size": {"values": [(8, 8), (16, 16), (32, 32)]},
-            "model.max_detections": {"values": [50, 100, 150]},
-            "model.use_spp": {"values": [True, False]},
+            "model.num_fc_layers": {"values": [1, 2, 3]},
+            "model.hidden_dim": {"values": [256, 512, 1024]}
         })
+
+        # Custom constraint: Ensure feature_channels length matches p_blocks
+        sweep_config["parameters"]["model.feature_channels"]["values"] = [
+            channels for channels in sweep_config["parameters"]["model.feature_channels"]["values"]
+            if len(channels) in sweep_config["parameters"]["model.p_blocks"]["values"]
+        ]
 
     return sweep_config
 
@@ -134,14 +137,14 @@ def main(model_type=None):
     cfg = get_cfg_defaults()
     entity = cfg["wandb"]["entity"]
     project = cfg["wandb"]["project"]
-    
+
     # Override model type if specified
     if model_type is not None:
         cfg["model"]["type"] = model_type
-        
+
     # Get model type from config
     model_type = cfg["model"]["type"]
-    
+
     # Set group based on model_type
     group = f"{model_type}-runs"
     cfg["wandb"]["group"] = group
