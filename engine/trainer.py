@@ -19,9 +19,17 @@ def train_epoch(model, train_loader, loss_fn, optimizer, device, accumulation_st
         with torch.set_grad_enabled(True):
             predictions = model(images)
 
+            # Move bounding boxes to the same device as the model
+            bboxes = []
+            for t in targets:
+                # Move bounding boxes to the same device
+                if 'bboxes' in t and t['bboxes'] is not None:
+                    t['bboxes'] = t['bboxes'].to(device)
+                bboxes.append(t['bboxes'])
+
             batch_dict = {
                 'images': images,
-                'bboxes': [t['bboxes'] for t in targets],
+                'bboxes': bboxes,
                 'labels': [t['labels'] for t in targets]
             }
             loss, _ = loss_fn(batch_dict, predictions)
@@ -48,9 +56,17 @@ def validate(model, val_loader, loss_fn, device):
             images = images.to(device)
             predictions = model(images)
 
+            # Move bounding boxes to the same device as the model
+            bboxes = []
+            for t in targets:
+                # Move bounding boxes to the same device
+                if 'bboxes' in t and t['bboxes'] is not None:
+                    t['bboxes'] = t['bboxes'].to(device)
+                bboxes.append(t['bboxes'])
+
             batch_dict = {
                 'images': images,
-                'bboxes': [t['bboxes'] for t in targets],
+                'bboxes': bboxes,
                 'labels': [t['labels'] for t in targets]
             }
             loss, _ = loss_fn(batch_dict, predictions)
@@ -108,6 +124,7 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
     start_time = time.time()
 
     # Training loop
+    print(f"Starting training for {num_epochs} epochs...")
     for epoch in range(num_epochs):
         torch.cuda.empty_cache()  # Clear GPU memory
         if (epoch + 1) % 10 == 0:
