@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from ..utils.loss_utils import match_predictions_to_targets
+from utils.loss_utils import match_predictions_to_targets
 
 class ConfidenceLoss(nn.Module):
     """Base class for confidence loss functions"""

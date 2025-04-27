@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import torch
 from torchvision.transforms import v2
-from .transforms import ResizeWithPadding
+from data.transform.transforms import ResizeWithPadding
 
 class ComposeWithBBox:
     """

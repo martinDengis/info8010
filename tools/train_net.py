@@ -1,13 +1,13 @@
 from data import get_data_loaders
-from engine import *
-from models import *
+from engine import do_train, build_optimizer, setup_scheduler
+from models import BibNet, build_bibnet, BibC3Net, build_bibc3net, BboxLoss
 from pathlib import Path
 import os
 
 
 def train(cfg):
     # Determine which model to build based on the model type in config
-    model_type = cfg.get('model', {}).get('type', 'bibnet')
+    model_type = cfg.get('model', {}).get('type', 'bibc3net')
 
     if model_type == 'bibnet':
         model = build_bibnet(cfg)
