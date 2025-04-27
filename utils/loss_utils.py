@@ -2,210 +2,136 @@ import torch
 import torch.nn.functional as F
 import math
 
+# Utils for loss functions
 
-def bbox_to_xyxy(box, xywh=True):
-    """Convert box from [x, y, w, h] to [x1, y1, x2, y2] format if needed"""
-    if xywh:
-        x, y, w, h = box.chunk(4, -1)
-        box_xyxy = torch.cat((x - w / 2, y - h / 2, x + w / 2, y + h / 2), -1)
-        return box_xyxy
-    return box
-
-
-def calculate_iou(box1, box2, xywh=True, eps=1e-7):
-    """Calculate IoU between two bounding boxes"""
-    # Convert to xyxy format
-    box1_xyxy = bbox_to_xyxy(box1, xywh)
-    box2_xyxy = bbox_to_xyxy(box2, xywh)
-
-    # Get the coordinates of bounding boxes
-    b1_x1, b1_y1, b1_x2, b1_y2 = box1_xyxy.chunk(4, -1)
-    b2_x1, b2_y1, b2_x2, b2_y2 = box2_xyxy.chunk(4, -1)
-
-    # Intersect
-    inter = (torch.min(b1_x2, b2_x2) - torch.max(b1_x1, b2_x1)).clamp(0) * \
-            (torch.min(b1_y2, b2_y2) - torch.max(b1_y1, b2_y1)).clamp(0)
-
-    # Union
-    w1, h1 = b1_x2 - b1_x1, b1_y2 - b1_y1 + eps
-    w2, h2 = b2_x2 - b2_x1, b2_y2 - b2_y1 + eps
-    union = w1 * h1 + w2 * h2 - inter + eps
-
-    # Output metrics
-    iou = inter / union
-    box1_coords = (b1_x1, b1_y1, b1_x2, b1_y2)
-    box2_coords = (b2_x1, b2_y1, b2_x2, b2_y2)
-    box1_dims = (w1, h1)
-    box2_dims = (w2, h2)
-    return iou, box1_coords, box2_coords, box1_dims, box2_dims
-
-
-def calculate_center_distance(box1_coords, box2_coords, enclosing_box_diag, eps=1e-7):
-    """Calculate the normalized center distance term for CIoU"""
-    b1_x1, b1_y1, b1_x2, b1_y2 = box1_coords
-    b2_x1, b2_y1, b2_x2, b2_y2 = box2_coords
-
-    # Enclosing box
-    cw = torch.max(b1_x2, b2_x2) - torch.min(b1_x1, b2_x1)
-    ch = torch.max(b1_y2, b2_y2) - torch.min(b1_y1, b2_y1)
-    c2 = cw ** 2 + ch ** 2 + eps  # Convex diagonal squared
-
-    # Center distance
-    rho2 = ((b2_x1 + b2_x2 - b1_x1 - b1_x2) ** 2 +
-            (b2_y1 + b2_y2 - b1_y1 - b1_y2) ** 2) / 4  # Center dist ** 2
-
-    return rho2 / c2
-
-
-def calculate_aspect_ratio(box1_dims, box2_dims, iou, eps=1e-7):
-    """Calculate the aspect ratio term for CIoU"""
-    w1, h1 = box1_dims
-    w2, h2 = box2_dims
-
-    # Aspect ratio term
-    v = (4 / math.pi ** 2) * torch.pow(torch.atan(w2 / h2) - torch.atan(w1 / h1), 2)
-    with torch.no_grad():
-        alpha = v / (1 - iou + v + eps)
-
-    return v * alpha
-
-
-def ciou_loss(box_preds, box_targets, xywh=True, eps=1e-7, reduction='mean'):
+def box_iou(boxes1, boxes2):
     """
-    Calculate CIoU loss between predicted and target boxes
+    Compute IoU between bounding boxes.
 
     Args:
-        box_preds (torch.Tensor): Predicted box coordinates [batch_size, n_boxes, 4]
-        box_targets (torch.Tensor): Target box coordinates [batch_size, n_boxes, 4]
-        xywh (bool): True if boxes in [x, y, w, h] format, False if [x1, y1, x2, y2]
-        eps (float): Small constant to prevent division by zero
-        reduction (str): Reduction method: 'none', 'mean', 'sum'
+        boxes1: Tensor of shape [N, 4] (x, y, w, h) where x, y are center coordinates
+        boxes2: Tensor of shape [M, 4] (x, y, w, h) where x, y are center coordinates
 
     Returns:
-        torch.Tensor: CIoU loss (1 - CIoU)
+        Tensor of shape [N, M] containing pairwise IoUs
     """
-    orig_shape = box_preds.shape
+    # Convert (x, y, w, h) to (x1, y1, x2, y2) format
+    boxes1_x1y1 = boxes1[:, :2] - boxes1[:, 2:] / 2
+    boxes1_x2y2 = boxes1[:, :2] + boxes1[:, 2:] / 2
+    boxes2_x1y1 = boxes2[:, :2] - boxes2[:, 2:] / 2
+    boxes2_x2y2 = boxes2[:, :2] + boxes2[:, 2:] / 2
 
-    # Reshape if batch dimension
-    if len(box_preds.shape) > 2:
-        # Reshape to [total_boxes, 4]
-        box_preds = box_preds.reshape(-1, 4)
-        box_targets = box_targets.reshape(-1, 4)
+    # Calculate area of each box
+    area1 = torch.prod(boxes1[:, 2:], dim=1)  # w * h
+    area2 = torch.prod(boxes2[:, 2:], dim=1)  # w * h
 
-    # IoU, center dist, and aspect ratio terms
-    iou, box1_coords, box2_coords, box1_dims, box2_dims = calculate_iou(box_preds, box_targets, xywh, eps)
-    center_distance = calculate_center_distance(box1_coords, box2_coords, None, eps)
-    aspect_ratio = calculate_aspect_ratio(box1_dims, box2_dims, iou, eps)
+    # Calculate intersection
+    # Left-top and right-bottom corners of intersection
+    lt = torch.max(boxes1_x1y1[:, None, :], boxes2_x1y1[None, :, :])
+    rb = torch.min(boxes1_x2y2[:, None, :], boxes2_x2y2[None, :, :])
 
-    # Combine
-    ciou = iou - (center_distance + aspect_ratio)
-    loss = 1 - ciou  # Loss is 1 - CIoU
+    # Check if there's an intersection
+    wh = (rb - lt).clamp(min=0)
+    intersection = wh[:, :, 0] * wh[:, :, 1]
 
-    # Apply reduction
-    if reduction == 'none':
-        # Reshape back to original dimensions
-        if len(orig_shape) > 2:
-            return loss.reshape(orig_shape[:-1])
-        return loss
-    elif reduction == 'sum':
-        return loss.sum()
-    else:  # default is mean
-        return loss.mean()
+    # Calculate union
+    union = area1[:, None] + area2[None, :] - intersection
 
+    # Calculate IoU
+    iou = intersection / (union + 1e-6)  # Add epsilon to avoid division by zero
 
-def distribution_focal_loss(box_preds, box_targets, num_bins=16, reduction='mean'):
+    return iou
+
+def match_predictions_to_targets(predictions, targets, iou_threshold=0.1):
     """
-    Distribution Focal Loss (DFL) for bounding box coordinate regression
-    This implementation adapts to different input formats.
+    Match predicted bounding boxes to ground truth using greedy matching.
 
     Args:
-        box_preds (torch.Tensor): Predicted box coordinates
-            [batch_size, n_boxes, 4] or [n_boxes, 4]
-        box_targets (torch.Tensor): Target coordinates (normalized between 0 and 1)
-            [batch_size, n_boxes, 4] or [n_boxes, 4]
-        num_bins (int): Number of bins for coordinate discretization
-        reduction (str): Reduction method: 'none', 'mean', 'sum'
+        predictions: Tensor of shape [N, 4] (x, y, w, h) - predicted boxes
+        targets: Tensor of shape [M, 4] (x, y, w, h) - ground truth boxes
+        iou_threshold: Minimum IoU to consider a match
 
     Returns:
-        torch.Tensor: Distribution Focal Loss value
+        matches: List of (pred_idx, target_idx) pairs
+        unmatched_preds: List of indices of unmatched predictions
     """
-    # Ensure tensors are at least 2D (boxes, coordinates)
-    if len(box_preds.shape) == 1:
-        box_preds = box_preds.unsqueeze(0)
-    if len(box_targets.shape) == 1:
-        box_targets = box_targets.unsqueeze(0)
+    if len(targets) == 0:
+        # No targets, all predictions are unmatched
+        return [], list(range(len(predictions)))
 
-    # Store original shape for reshaping at the end
-    orig_shape = box_preds.shape
+    if len(predictions) == 0:
+        # No predictions, nothing to match
+        return [], []
 
-    # For standard implementation with no distribution dimension
-    if len(box_preds.shape) <= 3:  # [batch, bboxes, 4] or [bboxes, 4]
-        # Flatten to 2D: (total_boxes, 4)
-        if len(box_preds.shape) == 3:
-            box_preds_flat = box_preds.reshape(-1, 4)
-            box_targets_flat = box_targets.reshape(-1, 4)
-        else:
-            box_preds_flat = box_preds
-            box_targets_flat = box_targets
+    # Calculate IoU matrix
+    iou_matrix = box_iou(predictions, targets)
 
-        # Normalize predictions and targets to [0, 1] if not already
-        # This assumes predictions and targets are in the same coordinate format (e.g., both [0,1])
-        # If necessary, implement normalization here
+    matches = []
+    matched_pred_indices = set()
+    matched_target_indices = set()
 
-        # For simplicity, we'll use L1 loss as a substitute for DFL when distribution dimension is not available
-        # This is a simplification - ideally you should implement the proper DFL as described in papers
-        loss = F.l1_loss(box_preds_flat, box_targets_flat, reduction='none')
+    # Greedy matching - for each ground truth, find the best prediction
+    while True:
+        # Find highest remaining IoU
+        if len(matched_pred_indices) == len(predictions) or len(matched_target_indices) == len(targets):
+            break
 
-        # Reshape loss back to match original dimensions for 'none' reduction
-        if reduction == 'none':
-            return loss.reshape(orig_shape)
-        elif reduction == 'sum':
-            return loss.sum()
-        else:  # mean
-            return loss.mean()
+        # Create a mask for already matched pairs
+        pred_mask = torch.ones(len(predictions), dtype=torch.bool, device=predictions.device)
+        pred_mask[list(matched_pred_indices)] = False
 
-    # Full DFL implementation when predictions include distribution dimension [batch, bboxes, 4, bins]
-    else:
-        orig_batch_size = orig_shape[0]
-        orig_num_boxes = orig_shape[1]
-        total_coords = orig_batch_size * orig_num_boxes * 4
+        target_mask = torch.ones(len(targets), dtype=torch.bool, device=targets.device)
+        target_mask[list(matched_target_indices)] = False
 
-        # Reshape predictions for processing
-        box_preds = box_preds.reshape(-1, num_bins)  # to [batch*bboxes*4, bins]
-        box_targets = box_targets.reshape(-1)  # to [batch*bboxes*4]
+        # Apply mask to IoU matrix
+        masked_iou = iou_matrix.clone()
+        masked_iou[~pred_mask, :] = -1
+        masked_iou[:, ~target_mask] = -1
 
-        # Scale target to range [0, num_bins-1]
-        box_targets = box_targets * (num_bins - 1)
+        # Find max IoU
+        max_val, max_indices = masked_iou.view(-1).max(dim=0)
 
-        # Get left and right bin indices
-        target_left = box_targets.floor().long().clamp(0, num_bins - 2)
-        target_right = target_left + 1
+        # If best IoU is below threshold, we're done
+        if max_val < iou_threshold:
+            break
 
-        # weights for left and right bins
-        weight_left = target_right.float() - box_targets
-        weight_right = 1 - weight_left
+        # Convert flat index to 2D indices
+        pred_idx = max_indices.item() // len(targets)
+        target_idx = max_indices.item() % len(targets)
 
-        # Create one-hot encodings for left and right targets
-        target_left_onehot = F.one_hot(target_left, num_classes=num_bins).float()
-        target_right_onehot = F.one_hot(target_right, num_classes=num_bins).float()
+        # Add to matches
+        matches.append((pred_idx, target_idx))
+        matched_pred_indices.add(pred_idx)
+        matched_target_indices.add(target_idx)
 
-        # Apply weights to the one-hot encodings
-        target_left_onehot = target_left_onehot * weight_left.unsqueeze(-1)
-        target_right_onehot = target_right_onehot * weight_right.unsqueeze(-1)
+    # Identify unmatched predictions
+    unmatched_preds = [i for i in range(len(predictions)) if i not in matched_pred_indices]
 
-        # Combined target distribution
-        target_dist = target_left_onehot + target_right_onehot
+    return matches, unmatched_preds
 
-        # Use KL divergence as loss (equivalent to cross entropy with soft targets)
-        log_preds = F.log_softmax(box_preds, dim=1)
-        loss = -(target_dist * log_preds).sum(dim=1)
 
-        # Reshape and reduce
-        if reduction == 'none':
-            # Safely reshape back to original dimensions
-            return loss.reshape(orig_batch_size, orig_num_boxes, 4)
-        elif reduction == 'sum':
-            return loss.sum()
-        else:  # default is mean
-            return loss.mean()
+def rescale_bounding_boxes(normalized_boxes, image_width, image_height):
+    """
+    Convert normalized [0,1] bounding boxes to absolute pixel coordinates
 
+    Args:
+        normalized_boxes: Tensor of shape [N, 5] with [x, y, w, h, conf] in [0,1] range
+        image_width: Width of the original image in pixels
+        image_height: Height of the original image in pixels
+
+    Returns:
+        Tensor of shape [N, 5] with [x, y, w, h, conf] in pixel coordinates
+    """
+    scaled_boxes = normalized_boxes.clone()
+
+    # Scale x and width by image width
+    scaled_boxes[:, 0] *= image_width  # x coordinate
+    scaled_boxes[:, 2] *= image_width  # width
+
+    # Scale y and height by image height
+    scaled_boxes[:, 1] *= image_height  # y coordinate
+    scaled_boxes[:, 3] *= image_height  # height
+
+    # Confidence score remains unchanged (already in [0,1])
+
+    return scaled_boxes

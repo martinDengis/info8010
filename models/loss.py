@@ -1,76 +1,166 @@
 import torch
 import torch.nn as nn
-from utils.loss_utils import ciou_loss
+import torch.nn.functional as F
+from ..utils.loss_utils import match_predictions_to_targets
+
+class ConfidenceLoss(nn.Module):
+    """Base class for confidence loss functions"""
+    def __init__(self, reduction='sum'):
+        super(ConfidenceLoss, self).__init__()
+        self.reduction = reduction
+
+    def forward(self, inputs, targets):
+        raise NotImplementedError("Subclasses must implement forward method")
+
+
+# Standard Binary Cross-Entropy (BCE) loss for confidence scores
+class BCEConfidenceLoss(ConfidenceLoss):
+    """Standard BCE confidence loss"""
+    def __init__(self, reduction='sum'):
+        super(BCEConfidenceLoss, self).__init__(reduction)
+        self.bce = nn.BCELoss(reduction=reduction)
+
+    def forward(self, inputs, targets):
+        return self.bce(inputs, targets)
+
+
+# Focal Loss for confidence scores to address class imbalance
+# Reference: https://arxiv.org/abs/1708.02002
+class FocalConfidenceLoss(ConfidenceLoss):
+    """Focal Loss for confidence scores"""
+    def __init__(self, alpha=0.25, gamma=2.0, reduction='sum'):
+        super(FocalConfidenceLoss, self).__init__(reduction)
+        self.alpha = alpha
+        self.gamma = gamma
+
+    def forward(self, inputs, targets):
+        # BCE loss
+        bce_loss = F.binary_cross_entropy(inputs, targets, reduction='none')
+
+        # Focal loss computation
+        pt = torch.where(targets == 1, inputs, 1 - inputs)
+        alpha_factor = torch.where(targets == 1, self.alpha, 1 - self.alpha)
+        modulating_factor = (1.0 - pt) ** self.gamma
+
+        # Apply modulating and alpha factors
+        loss = alpha_factor * modulating_factor * bce_loss
+
+        # Apply reduction
+        if self.reduction == 'sum':
+            return loss.sum()
+        elif self.reduction == 'mean':
+            return loss.mean()
+        else:  # 'none'
+            return loss
+
 
 class BboxLoss(nn.Module):
-    def __init__(self, ciou_weight=1.0, l1_weight=1.0, num_classes=1, reduction='mean'):
-        super().__init__()
-        self.ciou_weight = ciou_weight
-        self.l1_weight = l1_weight
-        self.num_classes = num_classes
-        self.reduction = reduction
+    def __init__(self, lambda_bbox=1.0, lambda_conf=1.0, iou_threshold=0.1,
+                 conf_loss_type='bce', focal_alpha=0.25, focal_gamma=2.0):
+        """
+        Loss function for bounding box prediction.
+
+        Args:
+            lambda_bbox: Weight for bounding box regression loss
+            lambda_conf: Weight for confidence loss
+            iou_threshold: Minimum IoU to consider a match between prediction and ground truth
+            conf_loss_type: Type of confidence loss ('bce' or 'focal')
+            focal_alpha: Alpha parameter for focal loss (only used if conf_loss_type='focal')
+            focal_gamma: Gamma parameter for focal loss (only used if conf_loss_type='focal')
+        """
+        super(BboxLoss, self).__init__()
+        self.lambda_bbox = lambda_bbox
+        self.lambda_conf = lambda_conf
+        self.iou_threshold = iou_threshold
+        self.smooth_l1 = nn.SmoothL1Loss(reduction='sum')
+
+        # Initialize confidence loss based on type
+        if conf_loss_type.lower() == 'bce':
+            self.conf_loss = BCEConfidenceLoss(reduction='sum')
+        elif conf_loss_type.lower() == 'focal':
+            self.conf_loss = FocalConfidenceLoss(
+                alpha=focal_alpha, gamma=focal_gamma, reduction='sum'
+            )
+        else:
+            raise ValueError(f"Unsupported confidence loss type: {conf_loss_type}")
 
     def forward(self, batch, preds):
         """
-        Compute combined loss with CIoU and L1, handling variable target counts per image
+        Compute loss between predictions and ground truth.
 
         Args:
-            batch: Dictionary containing ground truth data
-            preds: Model predictions for bounding boxes [batch_size, total_predictions, 4]
+            batch: Dictionary containing ground truth annotations:
+                - 'images': Tensor of input images
+                - 'bboxes': List of tensors, each containing ground truth boxes for an image
+                - 'labels': List of tensors, each containing class labels for the boxes
+            preds: Tensor of shape [batch_size, N, 5] where:
+                - N is max_detections
+                - 5 is for [x, y, w, h, confidence]
+
+        Returns:
+            Total loss, and a dictionary with individual loss components
         """
-        # Get device from input tensors
-        device = preds.device
-        batch_size = preds.shape[0]
+        batch_size = preds.size(0)
+        num_preds = preds.size(1)  # N (max_detections)
 
-        # Extract ground truth data (bboxes are lists of tensors)
-        gt_bboxes_list = [bboxes.to(device) for bboxes in batch['bboxes']]
-        gt_labels_list = [labels.to(device) for labels in batch['labels']]
+        total_bbox_loss = 0.0
+        total_conf_loss = 0.0
+        total_matches = 0
 
-        # Initialize loss accumulators
-        total_ciou_loss = 0.0
-        total_l1_loss = 0.0
-        total_boxes = 0
-
-        # each img processed independently because of different number of gt bboxes
+        # Process each sample in batch separately
         for i in range(batch_size):
-            if gt_bboxes_list[i].shape[0] == 0:
-                continue    # no targets for this image
+            # Extract predictions and ground truth for this sample
+            pred_boxes = preds[i, :, :4]  # [N, 4] - (x, y, w, h)
+            pred_conf = preds[i, :, 4]    # [N] - confidence scores
 
-            # TODO:
-            # Get predictions for this image's ground truth bboxes
-            # This would typically involve finding the closest predicted bboxes to the ground truth
-            # For simplicity, we're just using the ground truth bboxes directly
-            # Ideally, we'd need to match predictions to ground truth!!
+            gt_boxes = batch['bboxes'][i]  # [M_i, 4] - (x, y, w, h)
 
-            num_gt = gt_bboxes_list[i].shape[0]
-            img_preds = preds[i][:num_gt]
-
-            # Calculate CIoU loss for this image
-            img_ciou_loss = ciou_loss(
-                img_preds,
-                gt_bboxes_list[i],
-                reduction='none'  # handle reduction later
+            # Match predictions to ground truth
+            matches, unmatched_preds = match_predictions_to_targets(
+                pred_boxes, gt_boxes, self.iou_threshold
             )
 
-            # Since BibNet model outputs direct box coordinates (not distributions),
-            # we use L1 loss as the second regression component instead of DFL (!= YOLOv5)
-            img_l1_loss = torch.nn.functional.l1_loss(
-                img_preds,
-                gt_bboxes_list[i],
-                reduction='none'  # handle reduction later
-            ).sum(dim=-1)
+            # Initialize confidence targets with zeros (no match)
+            conf_targets = torch.zeros_like(pred_conf)
 
-            # Accumulate losses
-            total_ciou_loss += img_ciou_loss.sum()
-            total_l1_loss += img_l1_loss.sum()
-            total_boxes += num_gt
+            # Compute bbox regression loss for matched predictions
+            if len(matches) > 0:
+                matched_pred_indices = [m[0] for m in matches]
+                matched_target_indices = [m[1] for m in matches]
 
-        # reduction
-        if self.reduction == 'mean' and total_boxes > 0:
-            total_ciou_loss = total_ciou_loss / total_boxes
-            total_l1_loss = total_l1_loss / total_boxes
+                # Extract matched predictions and targets
+                matched_preds = pred_boxes[matched_pred_indices]
+                matched_targets = gt_boxes[matched_target_indices]
 
-        # Combine with weights
-        total_loss = (self.ciou_weight * total_ciou_loss) + (self.l1_weight * total_l1_loss)
+                # Compute box regression loss (SmoothL1)
+                bbox_loss = self.smooth_l1(matched_preds, matched_targets)
 
-        return total_loss
+                # Set confidence targets for matches to 1.0
+                conf_targets[matched_pred_indices] = 1.0
+
+                # Add to total
+                total_bbox_loss += bbox_loss
+                total_matches += len(matches)
+
+            # Use the selected confidence loss
+            conf_loss = self.conf_loss(pred_conf, conf_targets)
+            total_conf_loss += conf_loss
+
+        # Normalize losses
+        if total_matches > 0:
+            total_bbox_loss /= total_matches
+        else:
+            total_bbox_loss = torch.tensor(0.0, device=preds.device)
+
+        total_conf_loss /= (batch_size * num_preds)
+
+        # Combine losses
+        total_loss = self.lambda_bbox * total_bbox_loss + self.lambda_conf * total_conf_loss
+
+        loss_dict = {
+            'loss': total_loss,
+            'bbox_loss': total_bbox_loss,
+            'conf_loss': total_conf_loss
+        }
+
+        return total_loss, loss_dict
