@@ -2,6 +2,7 @@ import torch
 import os
 import time
 from utils.wandb_integration import log_metrics, log_model, log_summary
+from torchvision import tv_tensors
 
 
 # ==============================
@@ -22,9 +23,15 @@ def train_epoch(model, train_loader, loss_fn, optimizer, device, accumulation_st
             # Move bounding boxes to the same device as the model
             bboxes = []
             for t in targets:
-                # Move bounding boxes to the same device
                 if 'bboxes' in t and t['bboxes'] is not None:
                     t['bboxes'] = t['bboxes'].to(device)
+                else:
+                    # Provide a default empty bounding box tensor
+                    t['bboxes'] = tv_tensors.BoundingBoxes(
+                        torch.zeros((0, 4), device=device),
+                        format="xywh",
+                        canvas_size=(images.shape[2], images.shape[3])
+                    )
                 bboxes.append(t['bboxes'])
 
             batch_dict = {
