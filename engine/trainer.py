@@ -9,7 +9,7 @@ from torchvision import tv_tensors
 # Helper Functions
 # ==============================
 
-def train_epoch(model, train_loader, loss_fn, optimizer, device, accumulation_steps):
+def train_epoch(model, train_loader, loss_fn, optimizer, device, accumulation_steps, current_epoch=0, max_epochs=100):
     """Run one epoch of training"""
     model.train()
     epoch_loss = 0.0
@@ -17,9 +17,12 @@ def train_epoch(model, train_loader, loss_fn, optimizer, device, accumulation_st
     loss_components = {
         'bbox_loss': 0.0,
         'conf_loss': 0.0,
-        'coverage_loss': 0.0,
         'match_rate': 0.0
     }
+
+    # Set current epoch in loss function if it has the method
+    if hasattr(loss_fn, 'set_epoch_info'):
+        loss_fn.set_epoch_info(current_epoch, max_epochs)
 
     for batch_idx, (images, targets) in enumerate(train_loader):
         images = images.to(device)
@@ -79,7 +82,6 @@ def validate(model, val_loader, loss_fn, device):
     loss_components = {
         'bbox_loss': 0.0,
         'conf_loss': 0.0,
-        'coverage_loss': 0.0,
         'match_rate': 0.0
     }
 
@@ -173,7 +175,7 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
 
         # ----- Training phase -----
         avg_train_loss, train_loss_components = train_epoch(
-            model, train_loader, loss_fn, optimizer, device, accumulation_steps)
+            model, train_loader, loss_fn, optimizer, device, accumulation_steps, epoch, num_epochs)
 
         # ----- Validation phase -----
         avg_val_loss, val_loss_components = validate(model, val_loader, loss_fn, device)

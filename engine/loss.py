@@ -156,74 +156,36 @@ class FocalConfidenceLoss(ConfidenceLoss):
             return loss
 
 
-# Coverage Loss to penalize missing ground truth objects
-class CoverageLoss(nn.Module):
-    """Loss that penalizes missing ground truth objects"""
-
-    def __init__(self, reduction='mean', eps=1e-6):
-        super(CoverageLoss, self).__init__()
-        self.reduction = reduction
-        self.eps = eps
-
-    def forward(self, pred_boxes, gt_boxes):
-        """
-        Calculate coverage loss for ground truth boxes.
-
-        Args:
-            pred_boxes: Tensor of shape [N, 4] - predicted boxes
-            gt_boxes: Tensor of shape [M, 4] - ground truth boxes
-
-        Returns:
-            Coverage loss value
-        """
-        if len(gt_boxes) == 0 or len(pred_boxes) == 0:
-            return torch.tensor(0.0, device=pred_boxes.device)
-
-        # Calculate IoU matrix
-        ious = box_iou(pred_boxes, gt_boxes)
-
-        # For each ground truth box, find the maximum IoU with any prediction
-        max_ious, _ = torch.max(ious, dim=0)
-
-        # Calculate the coverage penalty
-        # We use (1 - max_iou)² to penalize more heavily when no prediction is close
-        coverage_penalties = (1.0 - max_ious) ** 2
-
-        # Apply reduction
-        if self.reduction == 'sum':
-            return coverage_penalties.sum()
-        elif self.reduction == 'mean':
-            return coverage_penalties.mean()
-        else:  # 'none'
-            return coverage_penalties
-
-
 class BboxLoss(nn.Module):
-    def __init__(self, lambda_bbox=1.0, lambda_conf=1.0, lambda_coverage=1.0, iou_threshold=0.5,
-                 conf_loss_type='focal', focal_alpha=0.25, focal_gamma=2.0):
+    def __init__(self, lambda_bbox=1.0, lambda_conf=1.0, iou_threshold=0.5,
+                 conf_loss_type='focal', focal_alpha=0.25, focal_gamma=2.0,
+                 adaptive_threshold=True, adaptive_threshold_min=0.01, adaptive_threshold_epochs=0.2):
         """
         Improved loss function for bounding box prediction using CIoU loss.
 
         Args:
             lambda_bbox: Weight for bounding box regression loss
             lambda_conf: Weight for confidence loss
-            lambda_coverage: Weight for coverage loss (penalizes missing ground truth objects)
             iou_threshold: Minimum IoU to consider a match between prediction and ground truth
             conf_loss_type: Type of confidence loss ('bce' or 'focal')
             focal_alpha: Alpha parameter for focal loss (only used if conf_loss_type='focal')
             focal_gamma: Gamma parameter for focal loss (only used if conf_loss_type='focal')
+            adaptive_threshold: Whether to use adaptive threshold for early training
+            adaptive_threshold_min: Minimum threshold value to use at the start of training
+            adaptive_threshold_epochs: Fraction of training used for threshold adaptation
         """
         super(BboxLoss, self).__init__()
         self.lambda_bbox = lambda_bbox
         self.lambda_conf = lambda_conf
-        self.lambda_coverage = lambda_coverage
         self.iou_threshold = iou_threshold
+        self.current_epoch = 0
+        self.max_epochs = 100
+        self.adaptive_threshold = adaptive_threshold
+        self.adaptive_threshold_min = adaptive_threshold_min
+        self.adaptive_threshold_epochs = adaptive_threshold_epochs
 
         # CIoU loss for bounding box regression
         self.ciou_loss = CIoULoss()
-
-        # Coverage loss for missing ground truth objects
-        self.coverage_loss = CoverageLoss(reduction='mean')
 
         # Initialize confidence loss based on type
         if conf_loss_type.lower() == 'bce':
@@ -235,6 +197,11 @@ class BboxLoss(nn.Module):
         else:
             raise ValueError(
                 f"Unsupported confidence loss type: {conf_loss_type}")
+
+    def set_epoch_info(self, current_epoch, max_epochs):
+        """Set current epoch and max epochs for adaptive threshold"""
+        self.current_epoch = current_epoch
+        self.max_epochs = max_epochs
 
     def forward(self, batch, preds):
         """
@@ -257,7 +224,6 @@ class BboxLoss(nn.Module):
 
         total_bbox_loss = 0.0
         total_conf_loss = 0.0
-        total_coverage_loss = 0.0
         match_rates = []
 
         # Process each sample in batch separately
@@ -281,7 +247,11 @@ class BboxLoss(nn.Module):
 
             # Match predictions to ground truth
             matches, unmatched_preds = match_predictions_to_targets(
-                pred_boxes, gt_boxes_normed, self.iou_threshold
+                pred_boxes, gt_boxes_normed, self.iou_threshold,
+                epoch=self.current_epoch, max_epochs=self.max_epochs,
+                use_adaptive_threshold=self.adaptive_threshold,
+                min_threshold=self.adaptive_threshold_min,
+                adaptive_epochs_fraction=self.adaptive_threshold_epochs
             )
 
             sample_bbox_loss = torch.tensor(0.0, device=preds.device)
@@ -303,18 +273,7 @@ class BboxLoss(nn.Module):
                 conf_targets[matched_pred_indices] = 1.0
 
             # Calculate match rate for this sample
-            if len(gt_boxes) > 0:
-                match_rate = len(matches) / len(gt_boxes)
-
-                # Calculate coverage loss using the dedicated class
-                sample_coverage_loss = self.coverage_loss(
-                    pred_boxes, gt_boxes_normed)
-                total_coverage_loss += sample_coverage_loss
-            else:
-                match_rate = 1.0  # No ground truth boxes, so all predictions are "correct"
-                # No coverage loss needed when there are no ground truth boxes
-                sample_coverage_loss = torch.tensor(0.0, device=preds.device)
-                total_coverage_loss += sample_coverage_loss
+            match_rate = len(matches) / len(gt_boxes) if len(gt_boxes) > 0 else 1.0
 
             match_rates.append(match_rate)
 
@@ -331,26 +290,21 @@ class BboxLoss(nn.Module):
         # Apply normalization by batch size
         total_bbox_loss /= batch_size
         total_conf_loss /= batch_size
-        total_coverage_loss /= batch_size
 
-        # Final loss including coverage loss
         total_loss = (self.lambda_bbox * total_bbox_loss +
-                      self.lambda_conf * total_conf_loss +
-                      self.lambda_coverage * total_coverage_loss)
+                      self.lambda_conf * total_conf_loss)
 
         # Create loss dictionary for monitoring
         loss_dict = {
             'loss': total_loss,
             'bbox_loss': total_bbox_loss,
             'conf_loss': total_conf_loss,
-            'coverage_loss': total_coverage_loss,
             'match_rate': torch.tensor(avg_match_rate, device=preds.device)
         }
 
         # Debug
         # print(f'total loss: {total_loss.item():.4f}, bbox loss: {total_bbox_loss.item():.4f}, '
-        #       f'conf loss: {total_conf_loss.item():.4f}, coverage loss: {total_coverage_loss.item():.4f}, '
-        #       f'match rate: {avg_match_rate:.4f}')
+        #       f'conf loss: {total_conf_loss.item():.4f} ({avg_match_rate:.4f})')
         return total_loss, loss_dict
 
 

@@ -91,7 +91,8 @@ def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint"):
     return intersection / (box1_area + box2_area - intersection + 1e-6)
 
 
-def match_predictions_to_targets(predictions, targets, iou_threshold=0.1):
+def match_predictions_to_targets(predictions, targets, iou_threshold=0.1, epoch=0, max_epochs=100,
+                           use_adaptive_threshold=True, min_threshold=0.01, adaptive_epochs_fraction=0.2):
     """
     Match predicted bounding boxes to ground truth using the Hungarian algorithm.
 
@@ -99,6 +100,11 @@ def match_predictions_to_targets(predictions, targets, iou_threshold=0.1):
         predictions: Tensor of shape [N, 4] (x, y, w, h) - predicted boxes
         targets: Tensor of shape [M, 4] (x, y, w, h) - ground truth boxes
         iou_threshold: Minimum IoU to consider a match
+        epoch: Current training epoch
+        max_epochs: Total number of training epochs
+        use_adaptive_threshold: Whether to use adaptive threshold for early training
+        min_threshold: Minimum threshold value to use at the start of training
+        adaptive_epochs_fraction: Fraction of training used for threshold adaptation
 
     Returns:
         matches: List of (pred_idx, target_idx) pairs
@@ -112,20 +118,28 @@ def match_predictions_to_targets(predictions, targets, iou_threshold=0.1):
         # No predictions, nothing to match
         return [], []
 
+    # Calculate adaptive threshold for early training
+    adaptive_threshold = iou_threshold
+    if use_adaptive_threshold:
+        adaptive_epochs = int(max_epochs * adaptive_epochs_fraction)
+        if epoch < adaptive_epochs:
+            # Use exponential ramp-up: slow at start, faster at end
+            progress = epoch / adaptive_epochs
+            exp_progress = progress ** 2
+            adaptive_threshold = min_threshold + (iou_threshold - min_threshold) * exp_progress
+
     # Calculate IoU matrix
     iou_matrix = box_iou(predictions, targets)
 
     # Convert IoU to cost matrix (Hungarian algorithm minimizes cost)
     # We negate the IoU values to convert from a maximization to a minimization problem
     cost_matrix = -iou_matrix.detach().cpu().numpy()
-
-    # Use the scipy implementation of the Hungarian algorithm
     pred_indices, target_indices = linear_sum_assignment(cost_matrix)
 
-    # Filter matches by IoU threshold
+    # Filter matches by adaptive IoU threshold
     matches = []
     for pred_idx, target_idx in zip(pred_indices, target_indices):
-        if iou_matrix[pred_idx, target_idx] >= iou_threshold:
+        if iou_matrix[pred_idx, target_idx] >= adaptive_threshold:
             matches.append((pred_idx, target_idx))
 
     # Identify unmatched predictions
