@@ -50,6 +50,7 @@ def plot_img(imgs, row_title=None, save_path=None, **imshow_kwargs):
             axs[row_idx, 0].set(ylabel=row_title[row_idx])
 
     plt.tight_layout()
-    plt.show()
     if save_path is not None:
         plt.savefig(save_path, bbox_inches="tight")
+    else:
+        plt.show()

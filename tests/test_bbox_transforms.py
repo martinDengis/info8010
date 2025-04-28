@@ -1,11 +1,6 @@
 import sys
-import os
 import torch
-import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
-import pytest
-from PIL import Image
 
 # Add the project root to the path so we can import from utils
 project_root = Path(__file__).parent.parent
@@ -13,8 +8,6 @@ sys.path.append(str(project_root))
 
 from torchvision import tv_tensors
 from torchvision.transforms import v2
-from torchvision.io import read_image, ImageReadMode
-from torchvision.utils import draw_bounding_boxes
 from utils.plot_utils import plot_img
 from data.transform.build import build_transforms, ComposeWithBBox
 
@@ -64,7 +57,7 @@ def test_resize_transform():
 
     # Visualize the results
     plot_img([(image, bbox), (transformed_image, transformed_bbox)],
-             row_title=["Original", "Resized"])
+             row_title=["Original", "Resized"], save_path="resize_transform.png")
 
 def test_random_crop_transform():
     """Test if bounding boxes are properly transformed when applying random crop."""
@@ -79,7 +72,7 @@ def test_random_crop_transform():
 
     # Visualize the results
     plot_img([(image, bbox), (transformed_image, transformed_bbox)],
-             row_title=["Original", "Cropped"])
+             row_title=["Original", "Cropped"], save_path="random_crop_transform.png")
 
     # Verify the canvas size has changed
     assert transformed_bbox.canvas_size == (200, 300)
@@ -115,7 +108,7 @@ def test_composite_transforms():
 
     # Visualize the results (need to handle float tensor for transformed image)
     plot_img([(image, bbox), (transformed_image, transformed_bbox)],
-             row_title=["Original", "Composite Transform"])
+             row_title=["Original", "Composite Transform"], save_path="composite_transforms.png")
 
     # Verify the canvas size has changed
     assert transformed_bbox.canvas_size == (256, 256)
@@ -132,7 +125,7 @@ def test_real_transforms_pipeline():
 
     # Visualize the results
     plot_img([(image, bbox), (transformed_image, transformed_bbox)],
-             row_title=["Original", "Training Transforms"])
+             row_title=["Original", "Training Transforms"], save_path="real_transforms_pipeline.png")
 
     # The canvas size should match the size in build_transforms
     assert transformed_bbox.canvas_size[0] <= 512 and transformed_bbox.canvas_size[1] <= 512
