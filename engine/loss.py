@@ -348,9 +348,9 @@ class BboxLoss(nn.Module):
         }
 
         # Debug
-        print(f'total loss: {total_loss.item():.4f}, bbox loss: {total_bbox_loss.item():.4f}, '
-              f'conf loss: {total_conf_loss.item():.4f}, coverage loss: {total_coverage_loss.item():.4f}, '
-              f'match rate: {avg_match_rate:.4f}')
+        # print(f'total loss: {total_loss.item():.4f}, bbox loss: {total_bbox_loss.item():.4f}, '
+        #       f'conf loss: {total_conf_loss.item():.4f}, coverage loss: {total_coverage_loss.item():.4f}, '
+        #       f'match rate: {avg_match_rate:.4f}')
         return total_loss, loss_dict
 
 
