@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 import math
+from scipy.optimize import linear_sum_assignment
 
 # Utils for loss functions
 
@@ -39,12 +40,57 @@ def box_iou(boxes1, boxes2):
 
     # Calculate IoU
     iou = intersection / (union + 1e-6)  # Add epsilon to avoid division by zero
-
     return iou
+
+def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint"):
+    """
+    Calculates intersection over union (YOLOv1 loss function).
+
+    Parameters:
+        boxes_preds (tensor): Predictions of Bounding Boxes (BATCH_SIZE, 4)
+        boxes_labels (tensor): Correct labels of Bounding Boxes (BATCH_SIZE, 4)
+        box_format (str): midpoint/corners, if boxes (x,y,w,h) or (x1,y1,x2,y2)
+
+    Returns:
+        tensor: Intersection over union for all examples
+    """
+
+    if box_format == "midpoint":
+        box1_x1 = boxes_preds[..., 0:1] - boxes_preds[..., 2:3] / 2
+        box1_y1 = boxes_preds[..., 1:2] - boxes_preds[..., 3:4] / 2
+        box1_x2 = boxes_preds[..., 0:1] + boxes_preds[..., 2:3] / 2
+        box1_y2 = boxes_preds[..., 1:2] + boxes_preds[..., 3:4] / 2
+        box2_x1 = boxes_labels[..., 0:1] - boxes_labels[..., 2:3] / 2
+        box2_y1 = boxes_labels[..., 1:2] - boxes_labels[..., 3:4] / 2
+        box2_x2 = boxes_labels[..., 0:1] + boxes_labels[..., 2:3] / 2
+        box2_y2 = boxes_labels[..., 1:2] + boxes_labels[..., 3:4] / 2
+
+    if box_format == "corners":
+        box1_x1 = boxes_preds[..., 0:1]
+        box1_y1 = boxes_preds[..., 1:2]
+        box1_x2 = boxes_preds[..., 2:3]
+        box1_y2 = boxes_preds[..., 3:4]  # (N, 1)
+        box2_x1 = boxes_labels[..., 0:1]
+        box2_y1 = boxes_labels[..., 1:2]
+        box2_x2 = boxes_labels[..., 2:3]
+        box2_y2 = boxes_labels[..., 3:4]
+
+    x1 = torch.max(box1_x1, box2_x1)
+    y1 = torch.max(box1_y1, box2_y1)
+    x2 = torch.min(box1_x2, box2_x2)
+    y2 = torch.min(box1_y2, box2_y2)
+
+    # .clamp(0) is for the case when they do not intersect
+    intersection = (x2 - x1).clamp(0) * (y2 - y1).clamp(0)
+
+    box1_area = abs((box1_x2 - box1_x1) * (box1_y2 - box1_y1))
+    box2_area = abs((box2_x2 - box2_x1) * (box2_y2 - box2_y1))
+
+    return intersection / (box1_area + box2_area - intersection + 1e-6)
 
 def match_predictions_to_targets(predictions, targets, iou_threshold=0.1):
     """
-    Match predicted bounding boxes to ground truth using greedy matching.
+    Match predicted bounding boxes to ground truth using the Hungarian algorithm.
 
     Args:
         predictions: Tensor of shape [N, 4] (x, y, w, h) - predicted boxes
@@ -66,45 +112,21 @@ def match_predictions_to_targets(predictions, targets, iou_threshold=0.1):
     # Calculate IoU matrix
     iou_matrix = box_iou(predictions, targets)
 
+    # Convert IoU to cost matrix (Hungarian algorithm minimizes cost)
+    # We negate the IoU values to convert from a maximization to a minimization problem
+    cost_matrix = -iou_matrix.detach().cpu().numpy()
+
+    # Use the scipy implementation of the Hungarian algorithm
+    pred_indices, target_indices = linear_sum_assignment(cost_matrix)
+
+    # Filter matches by IoU threshold
     matches = []
-    matched_pred_indices = set()
-    matched_target_indices = set()
-
-    # Greedy matching - for each ground truth, find the best prediction
-    while True:
-        # Find highest remaining IoU
-        if len(matched_pred_indices) == len(predictions) or len(matched_target_indices) == len(targets):
-            break
-
-        # Create a mask for already matched pairs
-        pred_mask = torch.ones(len(predictions), dtype=torch.bool, device=predictions.device)
-        pred_mask[list(matched_pred_indices)] = False
-
-        target_mask = torch.ones(len(targets), dtype=torch.bool, device=targets.device)
-        target_mask[list(matched_target_indices)] = False
-
-        # Apply mask to IoU matrix
-        masked_iou = iou_matrix.clone()
-        masked_iou[~pred_mask, :] = -1
-        masked_iou[:, ~target_mask] = -1
-
-        # Find max IoU
-        max_val, max_indices = masked_iou.view(-1).max(dim=0)
-
-        # If best IoU is below threshold, we're done
-        if max_val < iou_threshold:
-            break
-
-        # Convert flat index to 2D indices
-        pred_idx = max_indices.item() // len(targets)
-        target_idx = max_indices.item() % len(targets)
-
-        # Add to matches
-        matches.append((pred_idx, target_idx))
-        matched_pred_indices.add(pred_idx)
-        matched_target_indices.add(target_idx)
+    for pred_idx, target_idx in zip(pred_indices, target_indices):
+        if iou_matrix[pred_idx, target_idx] >= iou_threshold:
+            matches.append((pred_idx, target_idx))
 
     # Identify unmatched predictions
+    matched_pred_indices = set(pred_idx for pred_idx, _ in matches)
     unmatched_preds = [i for i in range(len(predictions)) if i not in matched_pred_indices]
 
     return matches, unmatched_preds
