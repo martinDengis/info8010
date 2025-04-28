@@ -13,6 +13,13 @@ def train_epoch(model, train_loader, loss_fn, optimizer, device, accumulation_st
     """Run one epoch of training"""
     model.train()
     epoch_loss = 0.0
+    # Add tracking for loss components
+    loss_components = {
+        'bbox_loss': 0.0,
+        'conf_loss': 0.0,
+        'coverage_loss': 0.0,
+        'match_rate': 0.0
+    }
 
     for batch_idx, (images, targets) in enumerate(train_loader):
         images = images.to(device)
@@ -39,7 +46,7 @@ def train_epoch(model, train_loader, loss_fn, optimizer, device, accumulation_st
                 'bboxes': bboxes,
                 'labels': [t['labels'] for t in targets]
             }
-            loss, _ = loss_fn(batch_dict, predictions)
+            loss, loss_dict = loss_fn(batch_dict, predictions)
             loss = loss / accumulation_steps
 
             loss.backward()
@@ -50,14 +57,31 @@ def train_epoch(model, train_loader, loss_fn, optimizer, device, accumulation_st
 
             epoch_loss += loss.item() * accumulation_steps
 
+            # Accumulate loss components
+            for key in loss_components:
+                if key in loss_dict:
+                    loss_components[key] += loss_dict[key].item() * accumulation_steps
+
     print(f'Average loss for epoch: {epoch_loss / len(train_loader)}')
-    return epoch_loss / len(train_loader)
+
+    # Average the loss components
+    for key in loss_components:
+        loss_components[key] /= len(train_loader)
+
+    return epoch_loss / len(train_loader), loss_components
 
 
 def validate(model, val_loader, loss_fn, device):
     """Run validation"""
     model.eval()
     val_loss = 0.0
+    # Add tracking for loss components
+    loss_components = {
+        'bbox_loss': 0.0,
+        'conf_loss': 0.0,
+        'coverage_loss': 0.0,
+        'match_rate': 0.0
+    }
 
     with torch.no_grad():
         for images, targets in val_loader:
@@ -77,10 +101,19 @@ def validate(model, val_loader, loss_fn, device):
                 'bboxes': bboxes,
                 'labels': [t['labels'] for t in targets]
             }
-            loss, _ = loss_fn(batch_dict, predictions)
+            loss, loss_dict = loss_fn(batch_dict, predictions)
             val_loss += loss.item()
 
-    return val_loss / len(val_loader)
+            # Accumulate loss components
+            for key in loss_components:
+                if key in loss_dict:
+                    loss_components[key] += loss_dict[key].item()
+
+    # Average the loss components
+    for key in loss_components:
+        loss_components[key] /= len(val_loader)
+
+    return val_loss / len(val_loader), loss_components
 
 
 def save_checkpoint(model, optimizer, epoch, loss, path):
@@ -139,33 +172,35 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
             print(f"Epoch {epoch + 1}/{num_epochs} - Training...")
 
         # ----- Training phase -----
-        avg_train_loss = train_epoch(
+        avg_train_loss, train_loss_components = train_epoch(
             model, train_loader, loss_fn, optimizer, device, accumulation_steps)
 
         # ----- Validation phase -----
-        avg_val_loss = validate(model, val_loader, loss_fn, device)
+        avg_val_loss, val_loss_components = validate(model, val_loader, loss_fn, device)
 
-        # Calculate moving average for validation loss
+        # ----- Logging -----
         if val_loss_ema is None:
             val_loss_ema = avg_val_loss  # Initialize with first value
         else:
             val_loss_ema = ema_alpha * val_loss_ema + (1 - ema_alpha) * avg_val_loss
 
-        # Log metrics
-        current_lr = optimizer.param_groups[0]['lr']
-        log_metrics({
+        metrics = {
             'train_loss': avg_train_loss,
             'val_loss': avg_val_loss,
-            'val_loss_ema': val_loss_ema,  # Log the EMA value
-            'learning_rate': current_lr,
+            'val_loss_ema': val_loss_ema,
+            'learning_rate': optimizer.param_groups[0]['lr'],
             'epoch': epoch
-        })
+        }
 
-        # Step the scheduler
+        metrics.update({f'train_{key}': value for key, value in train_loss_components.items()})
+        metrics.update({f'val_{key}': value for key, value in val_loss_components.items()})
+        log_metrics(metrics)    # wandb logging
+
+        # ----- Scheduler step -----
         if scheduler is not None:
             scheduler.step()
 
-        # Early stopping - use EMA for more stable early stopping
+        # ----- Early stopping -----
         if early_stopping_enabled:
             if val_loss_ema < best_val_loss:
                 best_val_loss = val_loss_ema
@@ -181,13 +216,14 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
                     early_stopped = True
                     break
 
-        # Save checkpoint
+        # ----- Checkpointing -----
         if (epoch + 1) % save_freq == 0:
             checkpoint_path = os.path.join(
                 checkpoint_dir, f'checkpoint_epoch_{epoch}.pt')
             save_checkpoint(model, optimizer, epoch,
                             avg_train_loss, checkpoint_path)
 
+    # ----- End of training -----
     # Calculate training time
     training_time = time.time() - start_time
     stop_epoch = epoch
