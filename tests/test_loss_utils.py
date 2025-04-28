@@ -119,7 +119,7 @@ def test_match_predictions_to_targets_below_threshold():
     assert len(matches) == 0, "Expected no matches due to high threshold"
     assert unmatched_preds == [0], "Expected prediction 0 to be unmatched"
 
-def visualize_matches(predictions, targets, matches, title):
+def visualize_matches(predictions, targets, matches, title, save_path=None):
     """Visualize the bounding boxes and their matches."""
     # Skip visualization if either predictions or targets is empty
     if len(predictions) == 0 or len(targets) == 0:
@@ -132,12 +132,14 @@ def visualize_matches(predictions, targets, matches, title):
 
     # Plot predictions (red)
     for i, (x, y, w, h) in enumerate(predictions):
+        # Convert from center coordinates to top-left for Rectangle
         rect = patches.Rectangle((x-w/2, y-h/2), w, h, linewidth=2, edgecolor='r', facecolor='none')
         ax.add_patch(rect)
         ax.text(x-w/2, y-h/2, f'Pred {i}', color='r')
 
     # Plot targets (green)
     for i, (x, y, w, h) in enumerate(targets):
+        # Convert from center coordinates to top-left for Rectangle
         rect = patches.Rectangle((x-w/2, y-h/2), w, h, linewidth=2, edgecolor='g', facecolor='none')
         ax.add_patch(rect)
         ax.text(x-w/2, y-h/2, f'GT {i}', color='g')
@@ -147,6 +149,10 @@ def visualize_matches(predictions, targets, matches, title):
         pred_x, pred_y = predictions[pred_idx][0], predictions[pred_idx][1]
         target_x, target_y = targets[target_idx][0], targets[target_idx][1]
         ax.plot([pred_x, target_x], [pred_y, target_y], 'b-', linewidth=1)
+
+    # Save figure if save_path is provided
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
 
     plt.show()
 
