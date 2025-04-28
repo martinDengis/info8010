@@ -187,30 +187,29 @@ class BibC3Net(nn.Module):
 
         # Prediction head
         bbox_preds = self.head(x)
+        # print(f"bbox_preds: {bbox_preds.shape = }, {bbox_preds = }")
 
         return bbox_preds
 
 
-def build_bibc3net(cfg=None, in_channels=3, max_detections=10, p_blocks=3, c_blocks=2, feature_channels=[64, 128, 256], num_fc_layers=1, hidden_dim=512):
+def build_bibc3net(cfg):
     """
-    Build BibC3Net model with flexible parameter handling.
+    Build BibC3Net model from configuration.
 
     Args:
-        cfg: Configuration dictionary (optional).
-        in_channels, max_detections, ... : Parameters for building the model if no cfg is provided.
+        cfg: Configuration dictionary.
 
     Returns:
         Initialized BibC3Net model
     """
-    if cfg is not None:
-        # Override default parameters with those from cfg if provided
-        in_channels = cfg.get('input_channels', in_channels)
-        max_detections = cfg.get('max_detections', max_detections)
-        p_blocks = cfg.get('p_blocks', p_blocks)
-        c_blocks = cfg.get('c_blocks', c_blocks)
-        feature_channels = cfg.get('feature_channels', feature_channels)
-        num_fc_layers = cfg.get('num_fc_layers', num_fc_layers)
-        hidden_dim = cfg.get('hidden_dim', hidden_dim)
+    model_cfg = cfg.get("model", {})
+    in_channels = model_cfg.get("input_channels", 3)
+    max_detections = model_cfg.get("max_detections", 10)
+    p_blocks = model_cfg.get("p_blocks", 3)
+    c_blocks = model_cfg.get("c_blocks", 2)
+    feature_channels = model_cfg.get("feature_channels", [64, 128, 256])
+    num_fc_layers = model_cfg.get("num_fc_layers", 1)
+    hidden_dim = model_cfg.get("hidden_dim", 512)
 
     model = BibC3Net(
         input_channels=in_channels,
