@@ -50,6 +50,7 @@ def train_epoch(model, train_loader, loss_fn, optimizer, device, accumulation_st
 
             epoch_loss += loss.item() * accumulation_steps
 
+    print(f'Average loss for epoch: {epoch_loss / len(train_loader)}')
     return epoch_loss / len(train_loader)
 
 
