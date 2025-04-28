@@ -1,6 +1,7 @@
 from data import get_data_loaders
 from engine import do_train, build_optimizer, setup_scheduler
-from models import BibNet, build_bibnet, BibC3Net, build_bibc3net, BboxLoss
+from models import build_bibnet, build_bibc3net
+from engine import BboxLoss
 from pathlib import Path
 import os
 
@@ -27,14 +28,16 @@ def train(cfg):
     loss_cfg = cfg.get('loss', {})
     lambda_bbox = loss_cfg.get('lambda_bbox', 1.0)
     lambda_conf = loss_cfg.get('lambda_conf', 1.0)
+    lambda_coverage = loss_cfg.get('lambda_coverage', 1.0)
     iou_threshold = loss_cfg.get('iou_threshold', 0.1)
-    conf_loss_type = loss_cfg.get('conf_loss_type', 'bce')
+    conf_loss_type = loss_cfg.get('conf_loss_type', 'focal')
     focal_alpha = loss_cfg.get('focal_alpha', 0.25)
     focal_gamma = loss_cfg.get('focal_gamma', 2.0)
 
     loss_fn = BboxLoss(
         lambda_bbox=lambda_bbox,
         lambda_conf=lambda_conf,
+        lambda_coverage=lambda_coverage,
         iou_threshold=iou_threshold,
         conf_loss_type=conf_loss_type,
         focal_alpha=focal_alpha,

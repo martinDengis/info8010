@@ -39,8 +39,10 @@ def box_iou(boxes1, boxes2):
     union = area1[:, None] + area2[None, :] - intersection
 
     # Calculate IoU
-    iou = intersection / (union + 1e-6)  # Add epsilon to avoid division by zero
+    # Add epsilon to avoid division by zero
+    iou = intersection / (union + 1e-6)
     return iou
+
 
 def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint"):
     """
@@ -88,6 +90,7 @@ def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint"):
 
     return intersection / (box1_area + box2_area - intersection + 1e-6)
 
+
 def match_predictions_to_targets(predictions, targets, iou_threshold=0.1):
     """
     Match predicted bounding boxes to ground truth using the Hungarian algorithm.
@@ -127,7 +130,8 @@ def match_predictions_to_targets(predictions, targets, iou_threshold=0.1):
 
     # Identify unmatched predictions
     matched_pred_indices = set(pred_idx for pred_idx, _ in matches)
-    unmatched_preds = [i for i in range(len(predictions)) if i not in matched_pred_indices]
+    unmatched_preds = [i for i in range(
+        len(predictions)) if i not in matched_pred_indices]
 
     return matches, unmatched_preds
 
