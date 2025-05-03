@@ -54,10 +54,10 @@ def finish_run():
 
 def get_sweep_config(model_type='bibnet'):
     """
-    Get a WandB sweep configuration for BibNet/BibC3Net hyperparameter tuning.
+    Get a WandB sweep configuration for BibNet hyperparameter tuning.
 
     Args:
-        model_type (str): Type of model to configure ('bibnet' or 'bibc3net')
+        model_type (str): Type of model to configure ('bibnet' or 'yolov1)
 
     Returns:
         dict: A WandB sweep configuration
@@ -87,10 +87,7 @@ def get_sweep_config(model_type='bibnet'):
 
             # Training parameters
             # "training.batch_size": {"values": [8, 16, 32]},
-            "training.num_epochs": {"values": [100, 150]},
-
-            # Loss parameters
-            "loss.conf_loss_type": {"values": ["bce", "focal"]},
+            # "training.num_epochs": {"values": [100, 150]},
         }
     }
 
@@ -98,32 +95,17 @@ def get_sweep_config(model_type='bibnet'):
     if model_type == 'bibnet':
         # BibNet-specific parameters
         sweep_config["parameters"].update({
-            "model.backbone_channels": {"values": [
-                [32, 64, 128, 256],
-                [64, 128, 256, 512],
-                [128, 256, 512, 1024]
-            ]},
-            "model.neck_channels": {"values": [128, 256, 512]},
-            "model.num_res_blocks": {"values": [
-                [1, 2, 8, 8],
-                [2, 4, 8, 8],
-                [1, 2, 4, 4]
-            ]},
-        })
-    elif model_type == 'bibc3net':
-        # BibC3Net-specific parameters
-        sweep_config["parameters"].update({
-            "model.max_detections": {"values": [5, 10, 15]},
-            "model.p_blocks": {"values": [2, 3, 4]},
+            "model.p_blocks": {"values": [2, 3, 4, 5]},
             "model.c_blocks": {"values": [1, 2, 3]},
             # need to make sure each feature_channels has same lenght as corresponding p_blocks value
             "model.feature_channels": {"values": [
                 [32, 64],                 # For p_blocks=2
                 [32, 64, 128],            # For p_blocks=3
-                [32, 64, 128, 256]        # For p_blocks=4
+                [32, 64, 128, 256],       # For p_blocks=4
+                [32, 64, 128, 256, 512],  # For p_blocks=5
             ]},
             "model.num_fc_layers": {"values": [1, 2, 3]},
-            "model.hidden_dim": {"values": [256, 512, 1024]}
+            "model.hidden_size": {"values": [256, 512, 1024]}
         })
 
         # Custom constraint: Ensure feature_channels length matches p_blocks
@@ -134,8 +116,23 @@ def get_sweep_config(model_type='bibnet'):
 
     return sweep_config
 
+def run_single_experiment(cfg, entity, project, group):
+    """
+    Launch a single wandb experiment with the current configuration
 
-def main(model_type=None):
+    Args:
+        cfg (dict): Configuration dictionary
+        entity (str): WandB entity name
+        project (str): WandB project name
+        group (str): Group name for this run
+    """
+    # Initialize a new wandb run
+    with wandb.init(entity=entity, project=project, group=group, config=cfg) as run:
+        # Training logic
+        from tools.train_net import train
+        train(cfg)
+
+def main(model_type=None, run_sweep=False):
     # Get default configuration
     cfg = get_cfg_defaults()
     entity = cfg["wandb"]["entity"]
@@ -152,43 +149,48 @@ def main(model_type=None):
     group = f"{model_type}-runs"
     cfg["wandb"]["group"] = group
 
-    # Get sweep configuration
-    sweep_config = get_sweep_config(model_type)
+    if run_sweep:
+        # Get sweep configuration
+        sweep_config = get_sweep_config(model_type)
 
-    # Initialize sweep
-    sweep_id = wandb.sweep(sweep_config, project=cfg["wandb"]["project"])
+        # Initialize sweep
+        sweep_id = wandb.sweep(sweep_config, project=cfg["wandb"]["project"])
 
-    # Define the training function for each sweep run
-    def train_sweep():
-        # Initialize a new wandb run
-        with wandb.init(entity=entity, project=project, group=group) as run:
-            # Update config with sweep parameters
-            for key, value in run.config.items():
-                if '.' in key:
-                    # Handle nested config parameters
-                    parts = key.split('.')
-                    config_dict = cfg
-                    for part in parts[:-1]:
-                        # Handle array indices in the configuration path
-                        if part.isdigit():
-                            part = int(part)
-                        config_dict = config_dict[part]
+        # Define the training function for each sweep run
+        def train_sweep():
+            # Initialize a new wandb run
+            with wandb.init(entity=entity, project=project, group=group) as run:
+                # Update config with sweep parameters
+                for key, value in run.config.items():
+                    if '.' in key:
+                        # Handle nested config parameters
+                        parts = key.split('.')
+                        config_dict = cfg
+                        for part in parts[:-1]:
+                            # Handle array indices in the configuration path
+                            if part.isdigit():
+                                part = int(part)
+                            config_dict = config_dict[part]
 
-                    # Set the actual value
-                    last_part = parts[-1]
-                    if last_part.isdigit():
-                        last_part = int(last_part)
-                    config_dict[last_part] = value
-                else:
-                    # Handle top-level parameters
-                    cfg[key] = value
+                        # Set the actual value
+                        last_part = parts[-1]
+                        if last_part.isdigit():
+                            last_part = int(last_part)
+                        config_dict[last_part] = value
+                    else:
+                        # Handle top-level parameters
+                        cfg[key] = value
 
-            # Training logic
-            from tools.train_net import train
-            train(cfg)
+                # Training logic
+                from tools.train_net import train
+                train(cfg)
 
-    # Start the sweep agent
-    wandb.agent(sweep_id, train_sweep, count=10)  # Run 10 trials
+        # Start the sweep agent
+        wandb.agent(sweep_id, train_sweep, count=10)  # Run 10 trials
+    else:
+        # Run a single experiment with the current configuration
+        run_single_experiment(cfg, entity, project, group)
+
 
 
 if __name__ == "__main__":
