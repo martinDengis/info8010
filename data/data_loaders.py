@@ -1,7 +1,6 @@
 from torch.utils.data import DataLoader
 from pathlib import Path
 from data.bibnet_dataset import BibNetDataset
-from data.collate_batch import collate_fn
 from data.transform.build import build_train_transforms, build_test_transforms
 
 
@@ -20,11 +19,15 @@ def build_dataset(data_dir, mode, force_reload=False, transform=None):
     """
     print(f"Building {mode} dataset...")
     dataset = BibNetDataset(
-        data_dir=data_dir,
         mode=mode,
+        split_size=7,
+        num_boxes=2,
+        num_classes=1,
         transform=transform,
-        force_reload=force_reload
+        data_dir=data_dir,
+        force_reload=force_reload,
     )
+
     print(f"Built {mode} dataset with {len(dataset)} samples.")
 
     return dataset
@@ -40,18 +43,24 @@ def get_data_loaders(data_dir, batch_size):
 
     # Create or get datasets
     train_dataset = build_dataset(
-        data_dir, mode="train", transform=train_transform)
+        data_dir,
+        mode="train",
+        transform=train_transform
+    )
     val_dataset = build_dataset(
-        data_dir, mode="valid", transform=test_transform)
+        data_dir,
+        mode="valid",
+        transform=test_transform
+    )
     test_dataset = build_dataset(
-        data_dir, mode="test", transform=test_transform)
+        data_dir,
+        mode="test",
+        transform=test_transform
+    )
 
-    # Create data loaders with custom collate function
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
-                              collate_fn=collate_fn)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size,
-                            collate_fn=collate_fn)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size,
-                             collate_fn=collate_fn)
+    # Create data loaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, num_workers=4)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, num_workers=4)
 
     return train_loader, val_loader, test_loader

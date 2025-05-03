@@ -2,217 +2,165 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# Simplified YOLO-style architecture for bib number detection
-# Main reference:
-#   - [Ultralytics YOLOv5 Architecture](https://docs.ultralytics.com/yolov5/tutorials/architecture_description/)
 
-
-# will often be called with same in_ and out_ channels
-# goal: refine features rather than changing dimensionality
-class ConvBlock(nn.Module):
-    """Basic convolutional block with batch normalization and leaky ReLU activation"""
-
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=None):
-        super().__init__()
-        if padding is None:
-            padding = kernel_size // 2
-
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=False)
-        self.bn = nn.BatchNorm2d(out_channels)
-        self.act = nn.LeakyReLU(0.1)
-
-    def forward(self, x):
-        return self.act(self.bn(self.conv(x)))
-
-
-# ConvBlock called with same channels dim to simplify residual connections
-# otherwise, would need adding a projection layer
-class ResBlock(nn.Module):
-    """Residual block with two convolutions and a skip connection"""
-
-    def __init__(self, channels):
-        super().__init__()
-
-        self.conv1 = ConvBlock(channels, channels, kernel_size=1, padding=0)
-        self.conv2 = ConvBlock(channels, channels, kernel_size=3)
-
-    def forward(self, x):
-        residual = x
-        out = self.conv1(x)
-        out = self.conv2(out)
-        out += residual
-        return out
-
-
-class DownsampleBlock(nn.Module):
-    """Downsample block that reduces spatial dimensions by 2x"""
+class CBlock(nn.Module):
+    """
+    C Block: A custom convolutional block for feature extraction.
+    It consists of two convolutional layers with batch normalization, ReLU activation,
+    and a skip connection for better gradient flow.
+    """
 
     def __init__(self, in_channels, out_channels):
-        super().__init__()
+        super(CBlock, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
 
-        self.conv = ConvBlock(in_channels, out_channels, kernel_size=3, stride=2)
-
-    def forward(self, x):
-        return self.conv(x)
-
-
-class Neck(nn.Module):
-    """
-    Feature pyramid network (FPN) neck to process and merge features from different scales.
-    It connects the backbone modules and the BoundingBoxHead.
-    """
-
-    def __init__(self, in_channels_list, out_channels):
-        super().__init__()
-
-        # Lateral connections (1x1 convs to reduce channel dimensions)
-        self.lateral_convs = nn.ModuleList([
-            nn.Conv2d(in_ch, out_channels, kernel_size=1)
-            for in_ch in in_channels_list
-        ])
-
-        # Top-down pathway (upsampling)
-        self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
-
-        # After merging features
-        self.smooth_convs = nn.ModuleList([
-            ConvBlock(out_channels, out_channels, kernel_size=3)
-            for _ in range(len(in_channels_list) - 1)
-        ])
-
-    def forward(self, features):
-        # Process lateral connections
-        laterals = [conv(feature) for conv, feature in zip(self.lateral_convs, features)]
-
-        # Top-down pathway and feature fusion
-        results = [laterals[-1]]  # Start with the deepest feature
-        for i in range(len(laterals) - 2, -1, -1):
-            # Upsample the deeper feature
-            upsampled = self.upsample(results[0])
-
-            # Add the lateral connection
-            fused = laterals[i] + upsampled
-
-            # Apply smoothing
-            if i < len(self.smooth_convs):
-                fused = self.smooth_convs[i](fused)
-
-            # Prepend to results
-            results.insert(0, fused)
-
-        return results
-
-
-# block used for predicting bboxes
-class BoundingBoxHead(nn.Module):
-    """Head network for bounding box prediction  (no anchors != YOLOv5)"""
-
-    def __init__(self, in_channels, num_coords=4):
-        super().__init__()
-
-        self.num_coords = num_coords
-
-        # Convolutional layers before final prediction
-        self.conv1 = ConvBlock(in_channels, in_channels, kernel_size=3)
-        self.conv2 = ConvBlock(in_channels, in_channels, kernel_size=3)
-
-        # Final prediction layer (no activation, raw outputs)
-        self.pred = nn.Conv2d(in_channels, num_coords, kernel_size=1)
+        # Skip connection handling (1x1 conv if input and output channels differ)
+        self.skip = nn.Identity()
+        if in_channels != out_channels:
+            self.skip = nn.Conv2d(in_channels, out_channels, kernel_size=1)
 
     def forward(self, x):
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.pred(x)
-
-        # Reshape to [batch, H, W, 4] and then to [batch, H*W, 4]
-        batch_size, _, height, width = x.shape
-        x = x.permute(0, 2, 3, 1)  # [batch, height, width, 4]
-        x = x.reshape(batch_size, height * width, self.num_coords)  # [batch, height*width, 4]
-
+        residual = self.skip(x)
+        x = F.leaky_relu(self.bn1(self.conv1(x)))
+        x = self.bn2(self.conv2(x))
+        x = x + residual  # Skip connection
+        x = F.leaky_relu(x)     # LeakyReLU after addition
         return x
+
+
+class PBlock(nn.Module):
+    """
+    P Block: A block containing a sequence of CBlocks followed by pooling.
+    Part of the pattern: [[CONV → ReLU]*C → POOL]*P
+    """
+
+    def __init__(self, in_channels, out_channels, c_blocks=2):
+        super(PBlock, self).__init__()
+
+        # Create sequence of C CBlocks: [CONV → ReLU]*C
+        layers = []
+        current_channels = in_channels
+
+        for _ in range(c_blocks):
+            layers.append(CBlock(current_channels, out_channels))
+            current_channels = out_channels
+
+        # Add pooling layer: [[CONV → ReLU]*C → POOL]
+        layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
+
+        # Create the block
+        self.p_block = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.p_block(x)
+
+
+class BboxPredictionHead(nn.Module):
+    """
+    Bbox Prediction Head: A fully connected head for bounding box prediction.
+    It supports multiple FC→LeakyReLU layers, followed by a final FC layer.
+    Output shape is [batch_size, split_size*split_size*(num_classes+num_boxes*5)]
+    """
+
+    def __init__(self, in_features, split_size=7, num_boxes=2, num_classes=1, hidden_size=512, num_fc_layers=1):
+        super(BboxPredictionHead, self).__init__()
+        self.num_fc_layers = max(1, num_fc_layers)
+
+        # FC Network Creation similar to YOLOv1's _create_fcs
+        layers = []
+
+        # First layer from flattened features to hidden size
+        layers.extend([
+            nn.Linear(in_features * split_size * split_size, hidden_size),
+            nn.Dropout(0.0),
+            nn.LeakyReLU(0.1)
+        ])
+
+        # Additional hidden layers if requested
+        for _ in range(self.num_fc_layers - 1):
+            layers.append(nn.Linear(hidden_size, hidden_size))
+            layers.append(nn.Dropout(0.0))
+            layers.append(nn.LeakyReLU(0.1))
+
+        # Final output layer
+        output_dim = split_size * split_size * (num_classes + num_boxes * 5)
+        layers.append(nn.Linear(hidden_size, output_dim))
+
+        self.fc_net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.fc_net(x)
 
 
 class BibNet(nn.Module):
     """
-    BibNet model for bib number detection, based on a YOLO-style architecture.
-    Uses anchor-free direct coordinate prediction.
+    BibNet: CNN-based model for bib number detection using C blocks
     """
+    # INPUT → [[CONV → ReLU]*C → POOL?]*P → Global Average Pooling → [FC → ReLU]*L → FC → [BBOXES]
 
-    def __init__(self,
-                 input_channels=3,
-                 backbone_channels=[64, 128, 256, 512],
-                 neck_channels=256,
-                 num_res_blocks=[1, 2, 8, 8],
-                 num_coords=4):
+    def __init__(self, input_channels=3, p_blocks=3, c_blocks=2, feature_channels=[64, 128, 256], split_size=7, num_boxes=2, num_classes=1, hidden_size=512, num_fc_layers=1):
         """
         Initialize BibNet model.
-
-        Args:
-            input_channels: Number of input image channels (default: 3 for RGB)
-            backbone_channels: List of channel dimensions for each backbone stage
-            neck_channels: Number of channels in the FPN neck
-            num_res_blocks: Number of residual blocks in each backbone stage
-            num_coords: Number of coordinates per bounding box (default: 4 for [x, y, w, h])
         """
-        super().__init__()
+        super(BibNet, self).__init__()
 
-        # Input convolution
-        self.input_conv = ConvBlock(input_channels, backbone_channels[0], kernel_size=3)
+        if len(feature_channels) != p_blocks:
+            raise ValueError(
+                f"feature_channels must have length p_blocks ({p_blocks})")
 
-        # Backbone
-        self.backbone_stages = nn.ModuleList()
+        # Initial convolution
+        self.initial_block = nn.Sequential(
+            nn.Conv2d(input_channels, feature_channels[0], kernel_size=7, stride=2, padding=3),
+            nn.BatchNorm2d(feature_channels[0]),
+            nn.LeakyReLU(inplace=True)
+        )
 
-        in_channels = backbone_channels[0]
-        for i, (out_channels, res_blocks) in enumerate(zip(backbone_channels, num_res_blocks)):
-            stage = nn.Sequential()
+        # Create P blocks, each with C * CBlocks followed by pooling
+        # [[CONV → ReLU]*C → POOL]*P
+        self.p_blocks = nn.ModuleList()
+        for p in range(p_blocks):
+            # Define input and output channels for this PBlock
+            in_ch = feature_channels[p-1] if p > 0 else feature_channels[0]
+            out_ch = feature_channels[p]
 
-            # Downsample (except for the first stage which already has input_conv)
-            if i > 0:
-                stage.add_module(f"downsample_{i}", DownsampleBlock(in_channels, out_channels))
+            # Create and add the PBlock
+            self.p_blocks.append(PBlock(in_ch, out_ch, c_blocks))
 
-            # Add residual blocks
-            for j in range(res_blocks):
-                stage.add_module(f"res_{i}_{j}", ResBlock(out_channels))
+        # Adaptive Average Pooling
+        self.aap = nn.AdaptiveAvgPool2d((split_size, split_size))
 
-            self.backbone_stages.append(stage)
-            in_channels = out_channels
+        # Last feature channel size will be the input to the prediction head
+        final_feature_size = feature_channels[-1]
 
-        # FPN Neck
-        self.neck = Neck(backbone_channels, neck_channels)
-
-        # Bounding box prediction heads (one for each FPN level)
-        self.bbox_heads = nn.ModuleList([
-            BoundingBoxHead(neck_channels, num_coords)
-            for _ in range(len(backbone_channels))
-        ])
+        # Prediction head with customizable number of FC layers
+        self.head = BboxPredictionHead(
+            in_features=final_feature_size,
+            split_size=split_size,
+            num_boxes=num_boxes,
+            num_classes=num_classes,
+            hidden_size=hidden_size,
+            num_fc_layers=num_fc_layers
+        )
 
     def forward(self, x):
         """
         Forward pass of BibNet.
-
-        Args:
-            x: Input tensor of shape [batch_size, channels, height, width]
-
-        Returns:
-            Flattened tensor of bounding box predictions [batch_size, total_predictions, 4]
         """
         # Initial convolution
-        x = self.input_conv(x)
+        x = self.initial_block(x)
 
-        # Extract features from backbone stages
-        features = []
-        for i, stage in enumerate(self.backbone_stages):
-            x = stage(x) if i > 0 else stage(x)  # First stage doesn't need downsampling
-            features.append(x)
+        # Process through P blocks
+        for p_block in self.p_blocks:
+            x = p_block(x)
 
-        # Apply FPN neck
-        fpn_features = self.neck(features)
+        # Adaptive Average Pooling
+        x = self.aap(x)
 
-        # Apply bbox heads
-        bbox_preds = [head(feature) for head, feature in zip(self.bbox_heads, fpn_features)]
-
-        # Concatenate predictions from different levels
-        bbox_preds = torch.cat(bbox_preds, dim=1)  # [batch, sum(H*W), 4]
+        # Prediction head
+        bbox_preds = self.head(torch.flatten(x, start_dim=1))
 
         return bbox_preds
 
@@ -222,28 +170,31 @@ def build_bibnet(cfg):
     Build BibNet model from configuration.
 
     Args:
-        cfg: Configuration dictionary with model parameters
+        cfg: Configuration dictionary.
 
     Returns:
         Initialized BibNet model
     """
-    # Extract model parameters from cfg
-    model_cfg = cfg.get('model', {})
+    model_cfg = cfg.get("model", {})
+    in_channels = model_cfg.get("input_channels", 3)
+    p_blocks = model_cfg.get("p_blocks", 3)
+    c_blocks = model_cfg.get("c_blocks", 2)
+    feature_channels = model_cfg.get("feature_channels", [64, 128, 256])
+    split_size = model_cfg.get("split_size", 7)
+    num_boxes = model_cfg.get("num_boxes", 2)
+    num_classes = model_cfg.get("num_classes", 1)
+    hidden_size = model_cfg.get("hidden_size", 512)
+    num_fc_layers = model_cfg.get("num_fc_layers", 1)
 
-    input_channels = model_cfg.get('input_channels', 3)
-    backbone_channels = model_cfg.get('backbone_channels', [64, 128, 256, 512])
-    neck_channels = model_cfg.get('neck_channels', 256)
-    num_res_blocks = model_cfg.get('num_res_blocks', [1, 2, 8, 8])
-    num_coords = model_cfg.get('num_coords', 4)
-
-    # Create model
     model = BibNet(
-        input_channels=input_channels,
-        backbone_channels=backbone_channels,
-        neck_channels=neck_channels,
-        num_res_blocks=num_res_blocks,
-        num_coords=num_coords
+        input_channels=in_channels,
+        p_blocks=p_blocks,
+        c_blocks=c_blocks,
+        feature_channels=feature_channels,
+        split_size=split_size,
+        num_boxes=num_boxes,
+        num_classes=num_classes,
+        hidden_size=hidden_size,
+        num_fc_layers=num_fc_layers
     )
-
     return model
-

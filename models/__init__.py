@@ -1,4 +1,4 @@
 from models.bibnet import BibNet, build_bibnet
-from models.bibc3net import BibC3Net, build_bibc3net
+from models.yolov1 import Yolov1, build_yolov1_model
 
-__all__ = ['BibNet', 'build_bibnet', 'BibC3Net', 'build_bibc3net']
+__all__ = ['BibNet', 'build_bibnet', 'Yolov1', 'build_yolov1_model']

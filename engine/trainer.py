@@ -2,120 +2,60 @@ import torch
 import os
 import time
 from utils.wandb_integration import log_metrics, log_model, log_summary
-from torchvision import tv_tensors
+from utils.loss_utils import get_bboxes, mean_average_precision
 
 
 # ==============================
 # Helper Functions
 # ==============================
 
-def train_epoch(model, train_loader, loss_fn, optimizer, device, accumulation_steps, current_epoch=0, max_epochs=100):
+def train_epoch(model, train_loader, loss_fn, optimizer, acc_steps, device):
     """Run one epoch of training"""
     model.train()
     epoch_loss = 0.0
-    # Add tracking for loss components
-    loss_components = {
-        'bbox_loss': 0.0,
-        'conf_loss': 0.0,
-        'match_rate': 0.0
-    }
-
-    # Set current epoch in loss function if it has the method
-    if hasattr(loss_fn, 'set_epoch_info'):
-        loss_fn.set_epoch_info(current_epoch, max_epochs)
 
     for batch_idx, (images, targets) in enumerate(train_loader):
-        images = images.to(device)
+        images, targets = images.to(device), targets.to(device)
 
         with torch.set_grad_enabled(True):
-            predictions = model(images)
+            preds = model(images)
 
-            # Move bounding boxes to the same device as the model
-            bboxes = []
-            for t in targets:
-                if 'bboxes' in t and t['bboxes'] is not None:
-                    t['bboxes'] = t['bboxes'].to(device)
-                else:
-                    # Provide a default empty bounding box tensor
-                    t['bboxes'] = tv_tensors.BoundingBoxes(
-                        torch.zeros((0, 4), device=device),
-                        format="xywh",
-                        canvas_size=(images.shape[2], images.shape[3])
-                    )
-                bboxes.append(t['bboxes'])
-
-            batch_dict = {
-                'images': images,
-                'bboxes': bboxes,
-                'labels': [t['labels'] for t in targets]
-            }
-            loss, loss_dict = loss_fn(batch_dict, predictions)
-            loss = loss / accumulation_steps
-
+            loss = loss_fn(preds, targets)
+            loss = loss / acc_steps
             loss.backward()
 
-            if ((batch_idx + 1) % accumulation_steps == 0) or (batch_idx + 1 == len(train_loader)):
+            if ((batch_idx + 1) % acc_steps == 0) or (batch_idx + 1 == len(train_loader)):
                 optimizer.step()
                 optimizer.zero_grad()
 
-            epoch_loss += loss.item() * accumulation_steps
+            epoch_loss += loss.item() * acc_steps
 
-            # Accumulate loss components
-            for key in loss_components:
-                if key in loss_dict:
-                    loss_components[key] += loss_dict[key].item() * accumulation_steps
-
-    print(f'Average loss for epoch: {epoch_loss / len(train_loader)}')
-
-    # Average the loss components
-    for key in loss_components:
-        loss_components[key] /= len(train_loader)
-
-    return epoch_loss / len(train_loader), loss_components
+    avg_train_loss = epoch_loss / len(train_loader)
+    print(f'Average loss for epoch: {avg_train_loss}')
+    return avg_train_loss
 
 
-def validate(model, val_loader, loss_fn, device):
+def validate(model, val_loader, loss_fn, val_loss_ema, device, ema_alpha=0.9):
     """Run validation"""
     model.eval()
     val_loss = 0.0
-    # Add tracking for loss components
-    loss_components = {
-        'bbox_loss': 0.0,
-        'conf_loss': 0.0,
-        'match_rate': 0.0
-    }
-
     with torch.no_grad():
         for images, targets in val_loader:
-            images = images.to(device)
-            predictions = model(images)
+            images, targets = images.to(device), targets.to(device)
+            preds = model(images)
 
-            # Move bounding boxes to the same device as the model
-            bboxes = []
-            for t in targets:
-                # Move bounding boxes to the same device
-                if 'bboxes' in t and t['bboxes'] is not None:
-                    t['bboxes'] = t['bboxes'].to(device)
-                bboxes.append(t['bboxes'])
-
-            batch_dict = {
-                'images': images,
-                'bboxes': bboxes,
-                'labels': [t['labels'] for t in targets]
-            }
-            loss, loss_dict = loss_fn(batch_dict, predictions)
+            loss = loss_fn(preds, targets)
             val_loss += loss.item()
 
-            # Accumulate loss components
-            for key in loss_components:
-                if key in loss_dict:
-                    loss_components[key] += loss_dict[key].item()
+    avg_val_loss = val_loss / len(val_loader)
 
-    # Average the loss components
-    for key in loss_components:
-        loss_components[key] /= len(val_loader)
+    # EMA Validation Loss
+    if val_loss_ema is None:
+        val_loss_ema = avg_val_loss  # Initialize with first value
+    else:
+        val_loss_ema = ema_alpha * val_loss_ema + (1 - ema_alpha) * avg_val_loss
 
-    return val_loss / len(val_loader), loss_components
+    return avg_val_loss, val_loss_ema
 
 
 def save_checkpoint(model, optimizer, epoch, loss, path):
@@ -143,26 +83,25 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
     loss_fn.to(device)
 
     # Early stopping configuration
-    early_stopping_config = cfg.get('early_stopping', {'enabled': False})
-    early_stopping_enabled = early_stopping_config.get('enabled', False)
-    early_stopped = False
-    patience = early_stopping_config.get('patience', 10)
-    best_val_loss = float('inf')
+    estopping_config = cfg.get('early_stopping', {})
+    early_stopping_enabled = estopping_config.get('enabled', False)
+    patience = estopping_config.get('patience', 10)
     patience_counter = 0
+    early_stopped = False
+    best_val_loss = float('inf')
 
-    # Moving average for validation loss
-    ema_alpha = 0.9
-    val_loss_ema = None  # Initialize EMA tracker
+    # Init Val EMA Tracker
+    val_loss_ema = None
 
     # Training parameters
-    num_epochs = cfg.get('training', {}).get('num_epochs', 100)
+    training_config = cfg.get('training', {})
+    num_epochs = training_config.get('num_epochs', 100)
     best_epoch = -1
 
-    accumulation_steps = cfg.get('training', {}).get(
-        'gradient_accumulation_steps', 8)
-    accumulation_steps = max(1, accumulation_steps)
+    acc_steps = training_config.get('grad_acc_steps', 8)
+    acc_steps = max(1, acc_steps)
 
-    save_freq = cfg.get('training', {}).get('save_freq', 15)
+    save_freq = training_config.get('save_freq', 15)
     best_model_path = None
     start_time = time.time()
 
@@ -170,37 +109,51 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
     print(f"Starting training for {num_epochs} epochs...")
     for epoch in range(num_epochs):
         torch.cuda.empty_cache()  # Clear GPU memory
-        if (epoch + 1) % 10 == 0:
+        if epoch == 0 or (epoch + 1) % 10 == 0:
             print(f"Epoch {epoch + 1}/{num_epochs} - Training...")
 
+        # ----- mAP compute -----
+        pred_boxes, target_boxes = get_bboxes(
+            train_loader, model, iou_threshold=0.5, threshold=0.4
+        )
+
+        mAP = mean_average_precision(
+            pred_boxes, target_boxes, iou_threshold=0.5, box_format="midpoint"
+        )
+        print(f"Train mAP: {mAP}")
+
         # ----- Training phase -----
-        avg_train_loss, train_loss_components = train_epoch(
-            model, train_loader, loss_fn, optimizer, device, accumulation_steps, epoch, num_epochs)
+        avg_train_loss = train_epoch(
+            model,
+            train_loader,
+            loss_fn,
+            optimizer,
+            acc_steps,
+            device,
+        )
 
         # ----- Validation phase -----
-        avg_val_loss, val_loss_components = validate(model, val_loader, loss_fn, device)
-
-        # ----- Logging -----
-        if val_loss_ema is None:
-            val_loss_ema = avg_val_loss  # Initialize with first value
-        else:
-            val_loss_ema = ema_alpha * val_loss_ema + (1 - ema_alpha) * avg_val_loss
-
-        metrics = {
-            'train_loss': avg_train_loss,
-            'val_loss': avg_val_loss,
-            'val_loss_ema': val_loss_ema,
-            'learning_rate': optimizer.param_groups[0]['lr'],
-            'epoch': epoch
-        }
-
-        metrics.update({f'train_{key}': value for key, value in train_loss_components.items()})
-        metrics.update({f'val_{key}': value for key, value in val_loss_components.items()})
-        log_metrics(metrics)    # wandb logging
+        avg_val_loss, val_loss_ema = validate(
+            model,
+            val_loader,
+            loss_fn,
+            val_loss_ema,
+            device,
+        )
 
         # ----- Scheduler step -----
         if scheduler is not None:
             scheduler.step()
+
+        # ----- Logging -----
+        log_metrics({
+            'train_loss': avg_train_loss,
+            'val_loss': avg_val_loss,
+            'val_loss_ema': val_loss_ema,
+            'learning_rate': optimizer.param_groups[0]['lr'],
+            'mAP': mAP,
+            'epoch': epoch
+        })
 
         # ----- Early stopping -----
         if early_stopping_enabled:
@@ -235,6 +188,7 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
         'final_train_loss': avg_train_loss,
         'final_val_loss': avg_val_loss,
         'final_val_loss_ema': val_loss_ema,
+        'final_mAP': mAP,
         'best_val_loss': best_val_loss,
         'early_stopped': early_stopped,
         'best_epoch': best_epoch,
@@ -250,3 +204,4 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
         log_model(best_model_path, aliases=['best_model'])
 
     return model, summary
+

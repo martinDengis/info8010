@@ -13,75 +13,72 @@ Tuple is structured by (kernel_size, filters, stride, padding)
 List is structured by tuples and lastly int with number of repeats
 """
 
+architecture_config = [
+    (7, 64, 2, 3),
+    "M",
+    (3, 192, 1, 1),
+    "M",
+    (1, 128, 1, 0),
+    (3, 256, 1, 1),
+    (1, 256, 1, 0),
+    (3, 512, 1, 1),
+    "M",
+    [(1, 256, 1, 0), (3, 512, 1, 1), 4],
+    (1, 512, 1, 0),
+    (3, 1024, 1, 1),
+    "M",
+    [(1, 512, 1, 0), (3, 1024, 1, 1), 2],
+    (3, 1024, 1, 1),
+    (3, 1024, 2, 1),
+    (3, 1024, 1, 1),
+    (3, 1024, 1, 1),
+]
+
+
 class CNNBlock(nn.Module):
     def __init__(self, in_channels, out_channels, **kwargs):
         super(CNNBlock, self).__init__()
-        self.cnnblock = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, bias=False, **kwargs),
-            nn.BatchNorm2d(out_channels),
-            nn.LeakyReLU(0.1),
-        )
+        self.conv = nn.Conv2d(in_channels, out_channels, bias=False, **kwargs)
+        self.batchnorm = nn.BatchNorm2d(out_channels)
+        self.leakyrelu = nn.LeakyReLU(0.1)
 
     def forward(self, x):
-        return self.cnnblock(x)
+        return self.leakyrelu(self.batchnorm(self.conv(x)))
 
 
-class YOLOv1(nn.Module):
+class Yolov1(nn.Module):
     def __init__(self, in_channels=3, **kwargs):
-        super(YOLOv1, self).__init__()
+        super(Yolov1, self).__init__()
+        self.architecture = architecture_config
         self.in_channels = in_channels
-        self.convnet = self._create_conv_layers()
+        self.darknet = self._create_conv_layers(self.architecture)
         self.fcs = self._create_fcs(**kwargs)
 
     def forward(self, x):
-        x = self.convnet(x)
+        x = self.darknet(x)
+        x = nn.AdaptiveAvgPool2d((7,7))(x)
         return self.fcs(torch.flatten(x, start_dim=1))
 
-    def _create_conv_layers(self):
+    def _create_conv_layers(self, architecture):
         layers = []
         in_channels = self.in_channels
 
-        yolo_arch = [
-            (7, 64, 2, 3),
-            "M",
-            (3, 192, 1, 1),
-            "M",
-            (1, 128, 1, 0),
-            (3, 256, 1, 1),
-            (1, 256, 1, 0),
-            (3, 512, 1, 1),
-            "M",
-            [(1, 256, 1, 0), (3, 512, 1, 1), 4],
-            (1, 512, 1, 0),
-            (3, 1024, 1, 1),
-            "M",
-            [(1, 512, 1, 0), (3, 1024, 1, 1), 2],
-            (3, 1024, 1, 1),
-            (3, 1024, 2, 1),
-            (3, 1024, 1, 1),
-            (3, 1024, 1, 1),
-        ]
-
-        for layer in yolo_arch:
-            if type(layer) == tuple:
+        for x in architecture:
+            if type(x) == tuple:
                 layers += [
                     CNNBlock(
-                        in_channels,
-                        out_channels=layer[1],
-                        kernel_size=layer[0],
-                        stride=layer[2],
-                        padding=layer[3],
+                        in_channels, x[1], kernel_size=x[0], stride=x[2], padding=x[3],
                     )
                 ]
-                in_channels = layer[1]
+                in_channels = x[1]
 
-            elif type(layer) == str:
+            elif type(x) == str:
                 layers += [nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2))]
 
-            elif type(layer) == list:
-                conv1 = layer[0]
-                conv2 = layer[1]
-                num_repeats = layer[2]
+            elif type(x) == list:
+                conv1 = x[0]
+                conv2 = x[1]
+                num_repeats = x[2]
 
                 for _ in range(num_repeats):
                     layers += [
@@ -107,25 +104,32 @@ class YOLOv1(nn.Module):
         return nn.Sequential(*layers)
 
     def _create_fcs(self, split_size, num_boxes, num_classes, hidden_size=512):
+        S, B, C = split_size, num_boxes, num_classes
+
+        # In original paper this should be
+        # nn.Linear(1024*S*S, 4096),
+        # nn.LeakyReLU(0.1),
+        # nn.Linear(4096, S*S*(B*5+C))
+
         return nn.Sequential(
             nn.Flatten(),
-            nn.Linear(1024 * split_size * split_size, hidden_size),
+            nn.Linear(1024 * S * S, hidden_size),
             nn.Dropout(0.0),
             nn.LeakyReLU(0.1),
-            nn.Linear(hidden_size, split_size * split_size * (num_classes + num_boxes * 5)),
+            nn.Linear(hidden_size, S * S * (C + B * 5)),
         )
 
 
-def build_yolov1_model(split_size=7, num_boxes=2, num_classes=1):
+def build_yolov1_model(num_classes=1, num_boxes=2, split_size=7):
     """
-    Build the YOLOv1 model with the specified parameters.
+    Build the YOLOv1 model with the specified number of classes and boxes.
 
     Args:
-        split_size (int): Number of grid cells along one dimension.
+        num_classes (int): Number of classes for the model.
         num_boxes (int): Number of bounding boxes per grid cell.
-        num_classes (int): Number of object classes.
+        split_size (int): Size of the grid to divide the image into.
 
     Returns:
-        YOLOv1: The constructed YOLOv1 model.
+        Yolov1: The constructed YOLOv1 model.
     """
-    return YOLOv1(split_size=split_size, num_boxes=num_boxes, num_classes=num_classes)
+    return Yolov1(split_size=split_size, num_boxes=num_boxes, num_classes=num_classes)

@@ -27,15 +27,20 @@ def main():
         print(f"Building {mode} dataset...")
 
         BibNetDataset(
-            data_dir=data_dir,
             mode=mode,
+            split_size=7,
+            num_boxes=2,
+            num_classes=1,
             transform=v2.Compose([
                 ResizeWithPadding((512, 512)),
                 v2.ToImage(),
                 v2.ToDtype(torch.float32, scale=True)
             ]),
-            force_reload=True
+            data_dir=data_dir,
+            force_reload=True,
+            stats_mode=False,
         )
+
         if mode == 'train':
             # stats will be calculated on training set
             mean, std = BibNetDataset.calculate_dataset_stats(data_dir=data_dir, mode='train')
