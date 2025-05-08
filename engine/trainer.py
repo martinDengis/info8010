@@ -1,8 +1,8 @@
 import torch
 import os
 import time
-from utils.wandb_integration import log_metrics, log_model, log_summary, log_ap_values
-from utils.loss_utils import get_bboxes, average_precision
+from utils.wandb_integration import log_metrics, log_model, log_summary, log_ap_values, log_precision_recall_curve
+from utils.loss_utils import get_bboxes, evaluate_detection_performance
 
 
 # ==============================
@@ -57,6 +57,22 @@ def validate(model, val_loader, loss_fn, val_loss_ema, device, ema_alpha=0.9):
 
     return avg_val_loss, val_loss_ema
 
+def detection_performance(model, train_loader, thresholds, device):
+    pred_boxes, target_boxes = get_bboxes(
+        train_loader, model, iou_threshold=0.5, threshold=0.4, device=device
+    )
+
+    # Single call to evaluate all metrics
+    eval_results = evaluate_detection_performance(
+        pred_boxes, target_boxes, thresholds, box_format="midpoint"
+    )
+
+    # Extract results
+    mAP = eval_results['mAP']
+    ap_dict = eval_results['ap_values']
+    detailed_metrics = eval_results.get('detailed_metrics', None)
+    return mAP, ap_dict, detailed_metrics
+
 
 def save_checkpoint(model, optimizer, epoch, loss, path):
     """Save model checkpoint"""
@@ -93,6 +109,9 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
     # Init Val EMA Tracker
     val_loss_ema = None
 
+    # Initialize mAP thresholds
+    thresholds = [t/100 for t in range(50, 100, 5)]
+
     # Training parameters
     training_config = cfg.get('training', {})
     num_epochs = training_config.get('num_epochs', 100)
@@ -112,26 +131,10 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
         if epoch == 0 or (epoch + 1) % 10 == 0:
             print(f"Epoch {epoch + 1}/{num_epochs} - Training...")
 
-        # ----- mAP compute -----
-        pred_boxes, target_boxes = get_bboxes(
-            train_loader, model, iou_threshold=0.5, threshold=0.4
-        )
-
-        # Calculate AP at different thresholds [0.05, 0.95] with step 0.05
-        thresholds = [t/100 for t in range(5, 100, 5)]
-        ap_values = []
-        ap_dict = {}  # Dictionary to store AP values for each threshold
-
-        for iou_threshold in thresholds:
-            ap = average_precision(
-                pred_boxes, target_boxes, iou_threshold=iou_threshold, box_format="midpoint"
-            )
-            ap_values.append(ap)
-            ap_dict[f'AP@{iou_threshold:.2f}'] = ap
-
-        # Calculate mAP as the average of AP values across thresholds
-        mAP = sum(ap_values) / len(ap_values)
-        print(f"Train mAP@[0.05,0.95]: {mAP}")
+        # ----- Detection Performance Evaluation -----
+        res = detection_performance(model, train_loader, thresholds, device)
+        mAP, ap_dict, detailed_metrics = res
+        print(f"Train mAP@[.5:.05:.95]: {mAP}")
 
         # ----- Training phase -----
         avg_train_loss = train_epoch(
@@ -163,21 +166,20 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
             'val_loss_ema': val_loss_ema,
             'learning_rate': optimizer.param_groups[0]['lr'],
             'mAP': mAP,
-            'epoch': epoch,
         })
         log_ap_values(ap_dict, epoch)
+        log_precision_recall_curve(detailed_metrics['precision_recall_curve'], epoch)
 
         # ----- Early stopping -----
-        if early_stopping_enabled:
-            if val_loss_ema < best_val_loss:
-                best_val_loss = val_loss_ema
-                best_epoch = epoch
-                patience_counter = 0
-                # Save best model
-                best_model_path = os.path.join(checkpoint_dir, 'best_model.pt')
-                save_checkpoint(model, optimizer, epoch,
-                                avg_val_loss, best_model_path)
-            else:
+        if val_loss_ema < best_val_loss:
+            best_val_loss = val_loss_ema
+            best_epoch = epoch
+            patience_counter = 0
+            best_model_path = os.path.join(checkpoint_dir, 'best_model.pt')
+            save_checkpoint(model, optimizer, epoch,
+                            avg_val_loss, best_model_path)
+
+            if early_stopping_enabled:
                 patience_counter += 1
                 if patience_counter >= patience:
                     early_stopped = True
@@ -192,21 +194,17 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
 
     # ----- End of training -----
     # Calculate training time
-    training_time = time.time() - start_time
+    training_time = (time.time() - start_time) / 60.0  # training time in minutes
     stop_epoch = epoch
 
     # Log summary metrics
     summary = {
-        'final_train_loss': avg_train_loss,
-        'final_val_loss': avg_val_loss,
-        'final_val_loss_ema': val_loss_ema,
-        'final_mAP': mAP,
         'best_val_loss': best_val_loss,
         'early_stopped': early_stopped,
         'best_epoch': best_epoch,
         'stop_epoch': stop_epoch,
         'total_epoch': num_epochs,
-        'training_time': training_time,
+        'training_time_minutes': training_time,
         'nb_params': sum(p.numel() for p in model.parameters() if p.requires_grad),
     }
     log_summary(summary)

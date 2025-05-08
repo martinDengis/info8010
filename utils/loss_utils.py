@@ -215,6 +215,19 @@ def get_bboxes(
     box_format="midpoint",
     device="cuda",
 ):
+    """
+    Retrieves all predicted and true bounding boxes from the dataset
+    and model. This is used to calculate mAP.
+
+    Parameters:
+        loader (DataLoader): DataLoader for the dataset
+        model (nn.Module): Model used for predictions
+        iou_threshold (float): threshold where predicted bboxes is correct
+        threshold (float): threshold to remove predicted bboxes (independent of IoU)
+        pred_format (str): "cells" or "bbox" used to specify bboxes
+        box_format (str): "midpoint" or "corners" used to specify bboxes
+        device (str): Device to run the model on
+    """
     all_pred_boxes = []
     all_true_boxes = []
 
@@ -472,3 +485,65 @@ def evaluate_detection_metrics(
     }
 
     return metrics
+
+def evaluate_detection_performance(
+    pred_boxes, true_boxes, iou_thresholds, box_format="midpoint"
+):
+    """
+    Unified function to evaluate detection performance with multiple IoU thresholds
+
+    Parameters:
+        pred_boxes (list): list of predicted bounding boxes
+        true_boxes (list): list of ground truth bounding boxes
+        iou_thresholds (list): list of IoU thresholds to evaluate
+        box_format (str): format of bounding boxes ("midpoint" or "corners")
+
+    Returns:
+        dict: Dictionary containing:
+            - mAP: mean average precision across thresholds
+            - ap_values: dictionary of AP values at each threshold
+            - detailed_metrics: metrics for visualization (at IoU=0.5)
+    """
+    results = {}
+    ap_values = {}
+
+    # Evaluate AP for each threshold and calculate mAP
+    for iou_threshold in iou_thresholds:
+        key = f'AP@{iou_threshold:.2f}'
+        # Only compute PR curve data for IoU=0.5 (to save computation)
+        if abs(iou_threshold - 0.5) < 1e-6:
+            ap, precisions, recalls = get_precision_recall_curve(
+                pred_boxes, true_boxes, iou_threshold, box_format
+            )
+
+            # Convert tensors to numpy for logging
+            precisions_np = precisions.numpy()
+            recalls_np = recalls.numpy()
+
+            # Calculate AUC for PR curve
+            auc = compute_auc(precisions, recalls)
+
+            # Store visualization data for IoU=0.5
+            results['detailed_metrics'] = {
+                "AP": ap,
+                "AUC": auc,
+                "precision_recall_curve": {
+                    "precision": precisions_np,
+                    "recall": recalls_np
+                }
+            }
+        else:
+            # For other thresholds, just compute AP (more efficient)
+            ap = average_precision(
+                pred_boxes, true_boxes, iou_threshold, box_format
+            )
+
+        ap_values[key] = ap
+
+    # Calculate mAP across thresholds
+    mAP = sum(ap_values.values()) / len(ap_values)
+
+    results['mAP'] = mAP
+    results['ap_values'] = ap_values
+
+    return results
