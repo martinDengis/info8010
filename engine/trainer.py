@@ -1,8 +1,8 @@
 import torch
 import os
 import time
-from utils.wandb_integration import log_metrics, log_model, log_summary
-from utils.loss_utils import get_bboxes, mean_average_precision
+from utils.wandb_integration import log_metrics, log_model, log_summary, log_ap_values
+from utils.loss_utils import get_bboxes, average_precision
 
 
 # ==============================
@@ -117,10 +117,21 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
             train_loader, model, iou_threshold=0.5, threshold=0.4
         )
 
-        mAP = mean_average_precision(
-            pred_boxes, target_boxes, iou_threshold=0.5, box_format="midpoint"
-        )
-        print(f"Train mAP: {mAP}")
+        # Calculate AP at different thresholds [0.05, 0.95] with step 0.05
+        thresholds = [t/100 for t in range(5, 100, 5)]
+        ap_values = []
+        ap_dict = {}  # Dictionary to store AP values for each threshold
+
+        for iou_threshold in thresholds:
+            ap = average_precision(
+                pred_boxes, target_boxes, iou_threshold=iou_threshold, box_format="midpoint"
+            )
+            ap_values.append(ap)
+            ap_dict[f'AP@{iou_threshold:.2f}'] = ap
+
+        # Calculate mAP as the average of AP values across thresholds
+        mAP = sum(ap_values) / len(ap_values)
+        print(f"Train mAP@[0.05,0.95]: {mAP}")
 
         # ----- Training phase -----
         avg_train_loss = train_epoch(
@@ -152,8 +163,9 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
             'val_loss_ema': val_loss_ema,
             'learning_rate': optimizer.param_groups[0]['lr'],
             'mAP': mAP,
-            'epoch': epoch
+            'epoch': epoch,
         })
+        log_ap_values(ap_dict, epoch)
 
         # ----- Early stopping -----
         if early_stopping_enabled:

@@ -13,6 +13,14 @@ def log_metrics(metrics, step=None):
     if wandb.run is not None:
         wandb.log(metrics, step=step)
 
+def log_ap_values(ap_dict, epoch):
+    """Log AP values at different thresholds as a wandb Table"""
+    if wandb.run is not None:
+        # Create table data with thresholds and AP values
+        data = [[float(k.split('@')[1]), v] for k, v in ap_dict.items()]
+        table = wandb.Table(data=data, columns=["IoU Threshold", "AP"])
+        wandb.log({"AP_values": table}, step=epoch)
+
 
 def log_summary(metrics, step=None):
     """
