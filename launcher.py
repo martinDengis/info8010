@@ -9,7 +9,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Pass model_type to launcher
-    launcher(model_type=args.model_type)
+    launcher(model_type=args.model_type, run_sweep=args.sweep)
 
     # ---------- Local Testing ----------
     # from tools.train_net import train

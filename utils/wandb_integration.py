@@ -181,6 +181,26 @@ def main(model_type=None, run_sweep=False):
                         # Handle top-level parameters
                         cfg[key] = value
 
+                    # Fix feature_channels to match p_blocks
+                    if "model" in cfg and "p_blocks" in cfg["model"] and "feature_channels" in cfg["model"]:
+                        p_blocks = cfg["model"]["p_blocks"]
+                        feature_channels = cfg["model"]["feature_channels"]
+
+                        # Check if we need to adjust feature_channels
+                        if len(feature_channels) != p_blocks:
+                            # Create appropriate feature_channels for this p_blocks value
+                            if p_blocks == 2:
+                                cfg["model"]["feature_channels"] = [32, 64]
+                            elif p_blocks == 3:
+                                cfg["model"]["feature_channels"] = [32, 64, 128]
+                            elif p_blocks == 4:
+                                cfg["model"]["feature_channels"] = [32, 64, 128, 256]
+                            elif p_blocks == 5:
+                                cfg["model"]["feature_channels"] = [32, 64, 128, 256, 512]
+                            else:
+                                # Fallback - create array with duplicated values
+                                cfg["model"]["feature_channels"] = [64] * p_blocks
+
                 # Training logic
                 from tools.train_net import train
                 train(cfg)
