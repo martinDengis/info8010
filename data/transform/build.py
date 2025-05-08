@@ -58,7 +58,7 @@ def build_transforms(is_train=True, data_dir=None):
             v2.RandomAdjustSharpness(sharpness_factor=2, p=0.3),
             v2.RandomApply(
                 [v2.GaussianBlur(kernel_size=5, sigma=(0.1, 2.0))], p=0.3),
-            # v2.RandomGrayscale(p=0.1), # may not be necessary -> test it
+            v2.RandomGrayscale(p=0.2),
         ])
 
     # Convert to tensor
