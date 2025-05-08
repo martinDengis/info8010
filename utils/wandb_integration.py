@@ -13,13 +13,57 @@ def log_metrics(metrics, step=None):
     if wandb.run is not None:
         wandb.log(metrics, step=step)
 
+
 def log_ap_values(ap_dict, epoch):
     """Log AP values at different thresholds as a wandb Table"""
     if wandb.run is not None:
         # Create table data with thresholds and AP values
         data = [[float(k.split('@')[1]), v] for k, v in ap_dict.items()]
         table = wandb.Table(data=data, columns=["IoU Threshold", "AP"])
-        wandb.log({"AP_values": table}, step=epoch)
+        thresholds = [row[0] for row in data]
+        ap_values = [row[1] for row in data]
+        wandb.log({
+            "AP_values_table": table,
+            "AP_values_plot": wandb.plot.line(
+                table,
+                "IoU Threshold",
+                "AP",
+                title="AP Values at Different IoU Thresholds"
+            )
+        }, step=epoch)
+
+
+def log_precision_recall_curve(curve_data, epoch=None):
+    """
+    Log precision-recall curve data to wandb as a line plot
+
+    Args:
+        curve_data (dict): Dictionary containing 'precision' and 'recall' numpy arrays
+        epoch (int, optional): Current epoch for logging
+    """
+    if wandb.run is not None:
+        # Create line plot data
+        data = [[x, y]
+                for x, y in zip(curve_data["recall"], curve_data["precision"])]
+
+        # Create a wandb Table with the data
+        table = wandb.Table(data=data, columns=["Recall", "Precision"])
+
+        # Log the precision-recall curve as a line chart
+        wandb.log({
+            "precision_recall_curve": wandb.plot.line(
+                table, "Recall", "Precision",
+                title="Precision-Recall Curve (IoU=0.5)"
+            )
+        }, step=epoch)
+
+        # Additionally, log raw data for custom visualizations
+        wandb.log({
+            "precision_recall_data": {
+                "precision": curve_data["precision"],
+                "recall": curve_data["recall"]
+            }
+        }, step=epoch)
 
 
 def log_summary(metrics, step=None):
@@ -73,8 +117,8 @@ def get_sweep_config(model_type='bibnet'):
     sweep_config = {
         "method": "bayes",
         "metric": {
-            "name": "val_loss",
-            "goal": "minimize"
+            "name": "mAP",
+            "goal": "maximize"
         },
         "parameters": {
             # Shared parameters for both models
@@ -124,6 +168,7 @@ def get_sweep_config(model_type='bibnet'):
 
     return sweep_config
 
+
 def run_single_experiment(cfg, entity, project, group):
     """
     Launch a single wandb experiment with the current configuration
@@ -139,6 +184,7 @@ def run_single_experiment(cfg, entity, project, group):
         # Training logic
         from tools.train_net import train
         train(cfg)
+
 
 def main(model_type=None, run_sweep=False):
     # Get default configuration
@@ -202,12 +248,15 @@ def main(model_type=None, run_sweep=False):
                             elif p_blocks == 3:
                                 cfg["model"]["feature_channels"] = [32, 64, 128]
                             elif p_blocks == 4:
-                                cfg["model"]["feature_channels"] = [32, 64, 128, 256]
+                                cfg["model"]["feature_channels"] = [
+                                    32, 64, 128, 256]
                             elif p_blocks == 5:
-                                cfg["model"]["feature_channels"] = [32, 64, 128, 256, 512]
+                                cfg["model"]["feature_channels"] = [
+                                    32, 64, 128, 256, 512]
                             else:
                                 # Fallback - create array with duplicated values
-                                cfg["model"]["feature_channels"] = [64] * p_blocks
+                                cfg["model"]["feature_channels"] = [
+                                    64] * p_blocks
 
                 # Training logic
                 from tools.train_net import train
@@ -218,7 +267,6 @@ def main(model_type=None, run_sweep=False):
     else:
         # Run a single experiment with the current configuration
         run_single_experiment(cfg, entity, project, group)
-
 
 
 if __name__ == "__main__":
