@@ -166,7 +166,7 @@ def do_train(cfg, model, train_loader, val_loader, optimizer, scheduler, loss_fn
             'val_loss_ema': val_loss_ema,
             'learning_rate': optimizer.param_groups[0]['lr'],
             'mAP': mAP,
-        })
+        }, epoch)
         log_ap_values(ap_dict, epoch)
         log_precision_recall_curve(detailed_metrics['precision_recall_curve'], epoch)
 
