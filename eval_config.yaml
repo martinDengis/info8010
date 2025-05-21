@@ -1,0 +1,23 @@
+# Configuration for bib number detection model evaluation
+
+# Data settings
+data_dir: "data"
+
+# Model settings
+img_size: 416
+backbone_features: [64, 128, 256, 512, 1024]
+grid_sizes: [13, 26, 52]  # For 416x416 input: img_size // [32, 16, 8]
+
+# Evaluation settings
+batch_size: 8
+num_workers: 4
+seed: 42
+conf_threshold: 0.51
+
+# Visualization settings
+num_viz_samples: 10
+viz_output_dir: "visualizations"
+
+# Model to evaluate
+model_path: "checkpoints/best_model.pth"  # Local model path (used if wandb_artifact is not specified)
+wandb_artifact: "username/project/{model}:{version}"  # Optional W&B artifact path

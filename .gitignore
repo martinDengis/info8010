@@ -1,0 +1,9 @@
+data/
+wandb/
+wandb_*/
+__pycache__/
+logs/
+*.sbatch
+checkpoints/
+.ipynb_checkpoints/
+*.pth

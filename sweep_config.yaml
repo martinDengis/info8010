@@ -1,0 +1,75 @@
+# Sweep configuration for Weights & Biases
+
+# Sweep method settings
+method: bayes
+
+# Metric to optimize
+metric:
+  name: eval/mAP  # name as logged to wandb
+  goal: maximize
+
+# Early termination
+early_terminate:
+  type: hyperband
+  min_iter: 10
+
+# Hyperparameter search space
+parameters:
+  batch_size:
+    values: [4, 8, 16]
+
+  lr:
+    min: 0.0001
+    max: 0.01
+    distribution: log_uniform_values
+
+  weight_decay:
+    min: 0.0001
+    max: 0.001
+    distribution: log_uniform_values
+
+  # Architecture hyperparameters
+  backbone_features:
+    values: [
+      [64, 128, 256, 512, 1024],          # Standard architecture
+      [32, 64, 128, 256, 512],            # Lighter architecture
+      [64, 128, 256, 512, 768],           # Medium architecture
+      [96, 192, 384, 768, 1536],          # Heavier architecture
+      [64, 128, 256, 384, 512, 768, 1024], # Deeper architecture
+      [32, 64, 128, 256, 512, 768, 1024, 1280], # Very deep architecture
+    ]
+
+  # Loss hyperparameters
+  lambda_obj:
+    min: 1.0
+    max: 10.0
+    distribution: uniform
+
+  lambda_noobj:
+    min: 0.1
+    max: 2.0
+    distribution: uniform
+
+  lambda_coord:
+    min: 1.
+    max: 10.0
+    distribution: uniform
+
+# Fixed parameters (same for all runs)
+fixed_parameters:
+  # Data settings
+  data_dir: "data"
+
+  # Model settings
+  img_size: 416
+  grid_sizes: [13, 26, 52]  # For 416x416 input: img_size // [32, 16, 8]
+
+  # Training settings
+  num_workers: 4
+  epochs: 200
+  min_lr: 0.00001
+  seed: 42
+
+  # Checkpoint settings
+  checkpoint_dir: "checkpoints"
+  resume: null  # Path to checkpoint to resume from, null to start from scratch

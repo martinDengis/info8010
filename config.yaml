@@ -1,0 +1,27 @@
+# Configuration for bib number detection model
+
+# Data settings
+data_dir: "data"
+
+# Model settings
+img_size: 416
+backbone_features: [64, 128, 256, 512, 1024]
+grid_sizes: [13, 26, 52]  # For 416x416 input: img_size // [32, 16, 8]
+
+# Loss settings
+lambda_obj: 2.0
+lambda_noobj: 1.0
+lambda_coord: 5.0
+
+# Training settings
+batch_size: 8
+num_workers: 4
+epochs: 200
+lr: 0.001
+min_lr: 0.00001
+weight_decay: 0.0005
+seed: 42
+
+# Checkpoint settings
+checkpoint_dir: "checkpoints"
+resume: null  # Path to checkpoint to resume from, null to start from scratch
